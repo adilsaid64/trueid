@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/trueidd",
+    "crates/trueidctl",
+    "crates/trueid-core",
+    "crates/trueid-ipc"
+]
