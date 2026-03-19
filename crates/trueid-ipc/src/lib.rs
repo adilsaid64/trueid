@@ -1,4 +1,14 @@
+use serde::{Deserialize, Serialize};
+
 pub const SOCKET_PATH: &str = "/tmp/trueid.sock";
 
-pub const REQUEST_PING: &str = "ping";
-pub const RESPONSE_PONG: &str = "pong";
+#[derive(Serialize, Deserialize, Debug)]
+pub enum Request {
+    Ping,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum Response {
+    Pong,
+    Error(String),
+}
