@@ -1,8 +1,9 @@
 use std::fs;
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 
 use trueid_ipc::SOCKET_PATH;
+use trueid_ipc::Response;
 
 fn main() -> std::io::Result<()> {
     if Path::new(SOCKET_PATH).exists() {
@@ -14,8 +15,8 @@ fn main() -> std::io::Result<()> {
 
     for stream in listener.incoming() {
         match stream {
-            Ok(_stream) => {
-                println!("Client connected");
+            Ok(stream) => {
+                handle_connection(stream);
             }
             Err(err) => {
                 eprintln!("Error accepting connection: {}", err);
@@ -24,4 +25,13 @@ fn main() -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+
+fn handle_connection(mut stream: UnixStream) {
+    use std::io::{Read, Write};
+    let mut buffer = [0; 1024];
+    let _ = stream.read(&mut buffer);
+    let response_json = serde_json::to_string(&Response::Pong).unwrap();
+    let _ = writeln!(stream, "{}", response_json);
 }
