@@ -1,9 +1,7 @@
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "MyApp")]
-#[command(version = "1.0")]
-#[command(about = "Does awesome things", long_about = None)]
+#[command(version, about, long_about = None)]
 struct Cli {
     #[arg(long)]
     two: String,
