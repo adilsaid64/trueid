@@ -10,4 +10,7 @@ pub enum DomainError {
 
     #[error("verification score below threshold")]
     VerificationFailed,
+
+    #[error("user already has an enrolled template")]
+    AlreadyEnrolled,
 }

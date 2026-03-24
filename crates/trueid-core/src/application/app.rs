@@ -64,6 +64,22 @@ impl TrueIdApp {
             Err(crate::domain::error::DomainError::VerificationFailed.into())
         }
     }
+
+    pub fn enroll(&self, user: &UserId) -> Result<(), AppError> {
+        match self.health.status() {
+            HealthStatus::Healthy => {}
+            HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
+        }
+
+        if self.template_store.load(user)?.is_some() {
+            return Err(crate::domain::error::DomainError::AlreadyEnrolled.into());
+        }
+
+        let frame = self.video.next_frame()?;
+        let embedding = self.embedder.embed(&frame)?;
+        self.template_store.save(user, &embedding)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -231,5 +247,53 @@ mod tests {
             err,
             AppError::Domain(DomainError::VerificationFailed)
         ));
+    }
+
+    #[test]
+    fn enroll_stores_template() {
+        let emb = Embedding(vec![0.25, 0.75, 0.0]);
+        let store = Arc::new(MemoryStore::empty());
+        let app = app_with_store(Arc::clone(&store), emb.clone());
+        app.enroll(&UserId(2000)).unwrap();
+        let loaded = store.load(&UserId(2000)).unwrap();
+        assert_eq!(loaded, Some(emb));
+    }
+
+    #[test]
+    fn enroll_rejects_when_already_enrolled() {
+        let emb = Embedding(vec![1.0, 0.0]);
+        let store = Arc::new(MemoryStore::with_template(UserId(3000), emb.clone()));
+        let app = app_with_store(store, Embedding(vec![0.0, 1.0]));
+        let err = app.enroll(&UserId(3000)).unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Domain(DomainError::AlreadyEnrolled)
+        ));
+    }
+
+    #[test]
+    fn enroll_then_verify_succeeds() {
+        let emb = Embedding(vec![9.0, 1.0, 0.0]);
+        let store = Arc::new(MemoryStore::empty());
+        let app = app_with_store(Arc::clone(&store), emb.clone());
+        app.enroll(&UserId(4000)).unwrap();
+        assert!(app.verify(&UserId(4000)).unwrap());
+    }
+
+    #[test]
+    fn enroll_fails_when_unhealthy() {
+        let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
+        let app = TrueIdApp::new(
+            Arc::new(BadHealth),
+            Arc::new(StubBio),
+            Arc::new(TestFrame),
+            Arc::new(ConstEmbedder {
+                out: Embedding(vec![1.0, 0.0]),
+            }),
+            store,
+            Arc::new(ExactMatcher),
+        );
+        let err = app.enroll(&UserId(5000)).unwrap_err();
+        assert!(err.to_string().contains("camera offline"));
     }
 }
