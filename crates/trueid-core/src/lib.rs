@@ -5,3 +5,4 @@ pub mod ports;
 pub use application::app::TrueIdApp;
 pub use application::error::AppError;
 pub use domain::error::DomainError;
+pub use domain::{Embedding, Frame, PixelFormat, StreamModality, UserId};

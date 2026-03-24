@@ -2,7 +2,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 
-use trueid_core::TrueIdApp;
+use trueid_core::{TrueIdApp, UserId};
 use trueid_ipc::{IPC_PROTOCOL_VERSION, Request, Response};
 
 pub fn run_unix_socket(path: &str, app: Arc<TrueIdApp>) -> std::io::Result<()> {
@@ -58,6 +58,12 @@ fn dispatch(app: &TrueIdApp, request: Request) -> Response {
             Ok(()) => Response::Pong {
                 ipc_version: IPC_PROTOCOL_VERSION,
             },
+            Err(e) => Response::Error {
+                message: e.to_string(),
+            },
+        },
+        Request::Verify { uid } => match app.verify(&UserId(uid)) {
+            Ok(accepted) => Response::VerifyResult { accepted },
             Err(e) => Response::Error {
                 message: e.to_string(),
             },

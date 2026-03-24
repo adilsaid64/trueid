@@ -8,6 +8,7 @@ pub const SOCKET_PATH: &str = "/tmp/trueid.sock";
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
     Ping,
+    Verify { uid: u32 },
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -15,6 +16,9 @@ pub enum Request {
 pub enum Response {
     Pong {
         ipc_version: u32,
+    },
+    VerifyResult {
+        accepted: bool,
     },
     Error {
         message: String,
@@ -60,5 +64,12 @@ mod tests {
         let json = serde_json::to_string(&r).unwrap();
         let back: Response = serde_json::from_str(&json).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn request_verify_roundtrip() {
+        let json = serde_json::to_string(&Request::Verify { uid: 1000 }).unwrap();
+        let back: Request = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, Request::Verify { uid: 1000 });
     }
 }

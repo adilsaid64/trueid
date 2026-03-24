@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
+use trueid_core::Embedding;
 use trueid_core::TrueIdApp;
 use trueid_ipc::SOCKET_PATH;
 
@@ -15,7 +16,21 @@ fn main() -> std::io::Result<()> {
 
     let health = Arc::new(adapters::DefaultHealth);
     let biometric = Arc::new(adapters::DefaultBiometric);
-    let app = Arc::new(TrueIdApp::new(health, biometric));
+    let video = Arc::new(adapters::MockVideoSource::default_gray());
+    let embedder = Arc::new(adapters::MockEmbedder::new(Embedding(vec![
+        1.0, 0.0, 0.0,
+    ])));
+    let template_store = Arc::new(adapters::MemoryTemplateStore::empty());
+    let matcher = Arc::new(adapters::CosineMatcher::new(0.99));
+
+    let app = Arc::new(TrueIdApp::new(
+        health,
+        biometric,
+        video,
+        embedder,
+        template_store,
+        matcher,
+    ));
 
     ipc::run_unix_socket(SOCKET_PATH, app)
 }

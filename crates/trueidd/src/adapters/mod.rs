@@ -1,5 +1,9 @@
-mod biometric;
-mod health;
+mod default;
+mod matcher;
+mod memory;
+mod mock;
 
-pub use biometric::DefaultBiometric;
-pub use health::DefaultHealth;
+pub use default::{DefaultBiometric, DefaultHealth};
+pub use matcher::CosineMatcher;
+pub use memory::MemoryTemplateStore;
+pub use mock::{MockEmbedder, MockVideoSource};
