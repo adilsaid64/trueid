@@ -68,5 +68,11 @@ fn dispatch(app: &TrueIdApp, request: Request) -> Response {
                 message: e.to_string(),
             },
         },
+        Request::Enroll { uid } => match app.enroll(&UserId(uid)) {
+            Ok(()) => Response::EnrollOk,
+            Err(e) => Response::Error {
+                message: e.to_string(),
+            },
+        },
     }
 }

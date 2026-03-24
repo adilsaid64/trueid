@@ -15,6 +15,10 @@ enum Commands {
         #[arg(long)]
         uid: u32,
     },
+    Enroll {
+        #[arg(long)]
+        uid: u32,
+    },
 }
 
 fn main() {
@@ -29,7 +33,7 @@ fn main() {
                 eprintln!("daemon error: {message}");
                 std::process::exit(1);
             }
-            Ok(Response::VerifyResult { .. }) => {
+            Ok(_) => {
                 eprintln!("unexpected response for ping");
                 std::process::exit(1);
             }
@@ -47,12 +51,29 @@ fn main() {
                     std::process::exit(1);
                 }
             }
-            Ok(Response::Pong { .. }) => {
+            Ok(Response::Error { message }) => {
+                eprintln!("daemon error: {message}");
+                std::process::exit(1);
+            }
+            Ok(_) => {
                 eprintln!("unexpected response for verify");
                 std::process::exit(1);
             }
+            Err(e) => {
+                eprintln!("failed to reach trueidd: {e}");
+                std::process::exit(1);
+            }
+        },
+        Some(Commands::Enroll { uid }) => match send_request(Request::Enroll { uid: *uid }) {
+            Ok(Response::EnrollOk) => {
+                println!("enrolled (uid {uid})");
+            }
             Ok(Response::Error { message }) => {
                 eprintln!("daemon error: {message}");
+                std::process::exit(1);
+            }
+            Ok(_) => {
+                eprintln!("unexpected response for enroll");
                 std::process::exit(1);
             }
             Err(e) => {

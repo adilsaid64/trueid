@@ -9,6 +9,7 @@ pub const SOCKET_PATH: &str = "/tmp/trueid.sock";
 pub enum Request {
     Ping,
     Verify { uid: u32 },
+    Enroll { uid: u32 },
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -20,6 +21,7 @@ pub enum Response {
     VerifyResult {
         accepted: bool,
     },
+    EnrollOk,
     Error {
         message: String,
     },
@@ -71,5 +73,20 @@ mod tests {
         let json = serde_json::to_string(&Request::Verify { uid: 1000 }).unwrap();
         let back: Request = serde_json::from_str(&json).unwrap();
         assert_eq!(back, Request::Verify { uid: 1000 });
+    }
+
+    #[test]
+    fn request_enroll_roundtrip() {
+        let json = serde_json::to_string(&Request::Enroll { uid: 1000 }).unwrap();
+        let back: Request = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, Request::Enroll { uid: 1000 });
+    }
+
+    #[test]
+    fn response_enroll_ok_roundtrip() {
+        let r = Response::EnrollOk;
+        let json = serde_json::to_string(&r).unwrap();
+        let back: Response = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, r);
     }
 }
