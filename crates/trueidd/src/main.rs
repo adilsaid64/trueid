@@ -45,7 +45,9 @@ fn main() -> std::io::Result<()> {
     let embedder = Arc::new(adapters::MockEmbedder::new(Embedding(vec![
         1.0, 0.0, 0.0,
     ])));
-    let template_store = Arc::new(adapters::MemoryTemplateStore::empty());
+    let template_store = Arc::new(adapters::FileTemplateStore::open_default().map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    })?);
     let matcher = Arc::new(adapters::CosineMatcher::new(0.99));
 
     let app = Arc::new(TrueIdApp::new(
