@@ -2,14 +2,13 @@ use std::sync::Arc;
 
 use crate::domain::UserId;
 use crate::ports::{
-    BiometricVerifier, Embedder, EmbeddingMatcher, Health, HealthStatus, TemplateStore, VideoSource,
+    Embedder, EmbeddingMatcher, Health, HealthStatus, TemplateStore, VideoSource,
 };
 
 use super::error::AppError;
 
 pub struct TrueIdApp {
     health: Arc<dyn Health>,
-    biometric: Arc<dyn BiometricVerifier>,
     video: Arc<dyn VideoSource>,
     embedder: Arc<dyn Embedder>,
     template_store: Arc<dyn TemplateStore>,
@@ -19,7 +18,6 @@ pub struct TrueIdApp {
 impl TrueIdApp {
     pub fn new(
         health: Arc<dyn Health>,
-        biometric: Arc<dyn BiometricVerifier>,
         video: Arc<dyn VideoSource>,
         embedder: Arc<dyn Embedder>,
         template_store: Arc<dyn TemplateStore>,
@@ -27,7 +25,6 @@ impl TrueIdApp {
     ) -> Self {
         Self {
             health,
-            biometric,
             video,
             embedder,
             template_store,
@@ -42,10 +39,6 @@ impl TrueIdApp {
         }
     }
 
-    pub fn biometric_label(&self) -> &str {
-        self.biometric.label()
-    }
-
     pub fn verify(&self, user: &UserId) -> Result<bool, AppError> {
         match self.health.status() {
             HealthStatus::Healthy => {}
@@ -58,11 +51,7 @@ impl TrueIdApp {
             return Err(crate::domain::error::DomainError::NoEnrolledTemplate.into());
         };
 
-        if self.matcher.matches(&probe, &enrolled) {
-            Ok(true)
-        } else {
-            Err(crate::domain::error::DomainError::VerificationFailed.into())
-        }
+        Ok(self.matcher.matches(&probe, &enrolled))
     }
 
     pub fn enroll(&self, user: &UserId) -> Result<(), AppError> {
@@ -88,8 +77,8 @@ mod tests {
     use crate::domain::error::DomainError;
     use crate::domain::{Embedding, Frame, PixelFormat, StreamModality};
     use crate::ports::{
-        BiometricVerifier, EmbedError, Embedder, EmbeddingMatcher, Health, HealthStatus,
-        StoreError, TemplateStore, VideoSource,
+        EmbedError, Embedder, EmbeddingMatcher, Health, HealthStatus, StoreError, TemplateStore,
+        VideoSource,
     };
 
     struct OkHealth;
@@ -105,13 +94,6 @@ mod tests {
             HealthStatus::Degraded {
                 reason: "camera offline",
             }
-        }
-    }
-
-    struct StubBio;
-    impl BiometricVerifier for StubBio {
-        fn label(&self) -> &str {
-            "stub"
         }
     }
 
@@ -184,7 +166,6 @@ mod tests {
         let template_store: Arc<dyn TemplateStore> = store;
         TrueIdApp::new(
             Arc::new(OkHealth),
-            Arc::new(StubBio),
             Arc::new(TestFrame),
             Arc::new(ConstEmbedder { out: embed_out }),
             template_store,
@@ -204,7 +185,6 @@ mod tests {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(
             Arc::new(BadHealth),
-            Arc::new(StubBio),
             Arc::new(TestFrame),
             Arc::new(ConstEmbedder {
                 out: Embedding(vec![1.0]),
@@ -242,11 +222,7 @@ mod tests {
             Embedding(vec![1.0, 0.0, 0.0]),
         ));
         let app = app_with_store(store, Embedding(vec![0.0, 1.0, 0.0]));
-        let err = app.verify(&UserId(1000)).unwrap_err();
-        assert!(matches!(
-            err,
-            AppError::Domain(DomainError::VerificationFailed)
-        ));
+        assert!(!app.verify(&UserId(1000)).unwrap());
     }
 
     #[test]
@@ -285,7 +261,6 @@ mod tests {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(
             Arc::new(BadHealth),
-            Arc::new(StubBio),
             Arc::new(TestFrame),
             Arc::new(ConstEmbedder {
                 out: Embedding(vec![1.0, 0.0]),

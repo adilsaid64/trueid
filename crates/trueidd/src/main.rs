@@ -10,8 +10,8 @@ mod adapters;
 mod ipc;
 
 /// V4L device index when `TRUEID_CAMERA_INDEX` is unset (`/dev/video{N}`).
-/// `2` is common for the IR sensor; use `TRUEID_CAMERA_INDEX=0` for the usual RGB webcam.
-const DEFAULT_CAMERA_INDEX: u32 = 2;
+/// `0` is typical for the RGB webcam; use `TRUEID_CAMERA_INDEX=2` if your IR node is the capture device.
+const DEFAULT_CAMERA_INDEX: u32 = 0;
 
 fn main() -> std::io::Result<()> {
     if Path::new(SOCKET_PATH).exists() {
@@ -19,7 +19,6 @@ fn main() -> std::io::Result<()> {
     }
 
     let health = Arc::new(adapters::DefaultHealth);
-    let biometric = Arc::new(adapters::DefaultBiometric);
     let video: Arc<dyn trueid_core::ports::VideoSource> = if std::env::var("TRUEID_USE_MOCK")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
@@ -52,7 +51,6 @@ fn main() -> std::io::Result<()> {
 
     let app = Arc::new(TrueIdApp::new(
         health,
-        biometric,
         video,
         embedder,
         template_store,

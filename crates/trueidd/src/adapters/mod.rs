@@ -4,7 +4,7 @@ mod matcher;
 mod mock;
 mod v4l_video;
 
-pub use default::{DefaultBiometric, DefaultHealth};
+pub use default::DefaultHealth;
 pub use file::FileTemplateStore;
 pub use matcher::CosineMatcher;
 pub use mock::{MockEmbedder, MockVideoSource};
