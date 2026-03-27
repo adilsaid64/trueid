@@ -9,6 +9,10 @@ use trueid_ipc::SOCKET_PATH;
 mod adapters;
 mod ipc;
 
+/// V4L device index when `TRUEID_CAMERA_INDEX` is unset (`/dev/video{N}`).
+/// `2` is common for the IR sensor; use `TRUEID_CAMERA_INDEX=0` for the usual RGB webcam.
+const DEFAULT_CAMERA_INDEX: u32 = 2;
+
 fn main() -> std::io::Result<()> {
     if Path::new(SOCKET_PATH).exists() {
         fs::remove_file(SOCKET_PATH)?;
@@ -25,7 +29,7 @@ fn main() -> std::io::Result<()> {
         let index: u32 = std::env::var("TRUEID_CAMERA_INDEX")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
+            .unwrap_or(DEFAULT_CAMERA_INDEX);
         Arc::new(
             adapters::V4lVideoSource::open(index).map_err(|e| {
                 std::io::Error::new(

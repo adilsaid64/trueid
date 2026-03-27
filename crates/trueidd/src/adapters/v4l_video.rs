@@ -2,7 +2,7 @@ use std::io;
 use std::sync::Mutex;
 
 use v4l::buffer::Type;
-use v4l::io::traits::CaptureStream;
+use v4l::io::traits::{CaptureStream, Stream as V4lStream};
 use v4l::io::userptr::Stream as UserptrStream;
 use v4l::video::Capture;
 use v4l::{Device, Format, FourCC};
@@ -22,7 +22,10 @@ struct V4lInner {
 }
 
 impl V4lVideoSource {
-    /// Open `/dev/video{index}` (typically `0` for the default webcam).
+    /// Open `/dev/video{index}` for **RGB** capture (MJPEG or YUYV → RGB8).
+    ///
+    /// Which physical sensor that is (RGB vs IR) depends on how your kernel enumerates devices;
+    /// use `v4l2-ctl --list-devices` and pick the index that matches the RGB node.
     pub fn open(index: u32) -> Result<Self, CaptureError> {
         let dev = Device::new(index as usize).map_err(io_to_capture)?;
         let mjpg = Format::new(640, 480, FourCC::new(b"MJPG"));
@@ -34,9 +37,8 @@ impl V4lVideoSource {
             }
         };
 
-        let mut stream =
+        let stream =
             UserptrStream::with_buffers(&dev, Type::VideoCapture, 4).map_err(io_to_capture)?;
-        stream.next().map_err(io_to_capture)?;
 
         Ok(Self {
             inner: Mutex::new(V4lInner {
@@ -140,23 +142,30 @@ impl VideoSource for V4lVideoSource {
         let fourcc = inner.fourcc;
         let width = inner.width;
         let height = inner.height;
-        let (buf, meta) = inner.stream.next().map_err(io_to_capture)?;
-        let len = meta.bytesused as usize;
-        if len > buf.len() {
-            return Err(CaptureError::Failed(format!(
-                "invalid frame length {} > {}",
-                len,
-                buf.len()
-            )));
-        }
-        let payload = &buf[..len];
-        let bytes = decode_payload(&fourcc, payload, width, height)?;
-        Ok(Frame {
-            modality: StreamModality::Rgb,
-            width,
-            height,
-            format: PixelFormat::Rgb8,
-            bytes,
-        })
+
+        let capture = (|| -> Result<Frame, CaptureError> {
+            let (buf, meta) = inner.stream.next().map_err(io_to_capture)?;
+            let len = meta.bytesused as usize;
+            if len > buf.len() {
+                return Err(CaptureError::Failed(format!(
+                    "invalid frame length {} > {}",
+                    len,
+                    buf.len()
+                )));
+            }
+            let payload = &buf[..len];
+            let bytes = decode_payload(&fourcc, payload, width, height)?;
+            Ok(Frame {
+                modality: StreamModality::Rgb,
+                width,
+                height,
+                format: PixelFormat::Rgb8,
+                bytes,
+            })
+        })();
+
+        // End streaming so the sensor / LED are idle until the next enroll or verify.
+        let _ = inner.stream.stop();
+        capture
     }
 }
