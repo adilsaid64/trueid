@@ -2,8 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use trueid_core::Embedding;
-use trueid_core::TrueIdApp;
+use trueid_core::{Embedding, MultiFramePolicy, TrueIdApp};
 use trueid_ipc::SOCKET_PATH;
 
 mod adapters;
@@ -64,6 +63,7 @@ fn main() -> std::io::Result<()> {
         embedder,
         template_store,
         matcher,
+        MultiFramePolicy::default(),
     ));
 
     ipc::run_unix_socket(SOCKET_PATH, app)

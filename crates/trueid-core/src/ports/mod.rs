@@ -8,4 +8,4 @@ pub use embedder::{EmbedError, Embedder};
 pub use health::{Health, HealthStatus};
 pub use matcher::EmbeddingMatcher;
 pub use template_store::{StoreError, TemplateStore};
-pub use video::{CaptureError, VideoSource};
+pub use video::{CaptureError, CaptureSpec, VideoSource};

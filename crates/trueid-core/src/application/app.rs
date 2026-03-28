@@ -2,10 +2,28 @@ use std::sync::Arc;
 
 use crate::domain::UserId;
 use crate::ports::{
-    Embedder, EmbeddingMatcher, Health, HealthStatus, TemplateStore, VideoSource,
+    CaptureSpec, Embedder, EmbeddingMatcher, Health, HealthStatus, TemplateStore, VideoSource,
 };
 
 use super::error::AppError;
+
+/// How many frames to discard (warm-up) and keep per enroll / verify.
+///
+/// Tuned for commodity webcams: warm-up lets exposure settle; multiple kept frames improve robustness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MultiFramePolicy {
+    pub enroll: CaptureSpec,
+    pub verify: CaptureSpec,
+}
+
+impl Default for MultiFramePolicy {
+    fn default() -> Self {
+        Self {
+            enroll: CaptureSpec::new(2, 5),
+            verify: CaptureSpec::new(2, 3),
+        }
+    }
+}
 
 pub struct TrueIdApp {
     health: Arc<dyn Health>,
@@ -13,6 +31,7 @@ pub struct TrueIdApp {
     embedder: Arc<dyn Embedder>,
     template_store: Arc<dyn TemplateStore>,
     matcher: Arc<dyn EmbeddingMatcher>,
+    capture: MultiFramePolicy,
 }
 
 impl TrueIdApp {
@@ -22,6 +41,7 @@ impl TrueIdApp {
         embedder: Arc<dyn Embedder>,
         template_store: Arc<dyn TemplateStore>,
         matcher: Arc<dyn EmbeddingMatcher>,
+        capture: MultiFramePolicy,
     ) -> Self {
         Self {
             health,
@@ -29,6 +49,7 @@ impl TrueIdApp {
             embedder,
             template_store,
             matcher,
+            capture,
         }
     }
 
@@ -45,13 +66,19 @@ impl TrueIdApp {
             HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
         }
 
-        let frame = self.video.next_frame()?;
-        let probe = self.embedder.embed(&frame)?;
+        let spec = self.capture.verify.validate()?;
+        let frames = self.video.capture(spec)?;
         let Some(enrolled) = self.template_store.load(user)? else {
             return Err(crate::domain::error::DomainError::NoEnrolledTemplate.into());
         };
 
-        Ok(self.matcher.matches(&probe, &enrolled))
+        for frame in frames {
+            let probe = self.embedder.embed(&frame)?;
+            if self.matcher.matches(&probe, &enrolled) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn enroll(&self, user: &UserId) -> Result<(), AppError> {
@@ -64,9 +91,16 @@ impl TrueIdApp {
             return Err(crate::domain::error::DomainError::AlreadyEnrolled.into());
         }
 
-        let frame = self.video.next_frame()?;
-        let embedding = self.embedder.embed(&frame)?;
-        self.template_store.save(user, &embedding)?;
+        let spec = self.capture.enroll.validate()?;
+        let frames = self.video.capture(spec)?;
+        let mut embeddings = Vec::with_capacity(frames.len());
+        for frame in &frames {
+            embeddings.push(self.embedder.embed(frame)?);
+        }
+        let template = crate::domain::Embedding::try_average(&embeddings).ok_or(
+            crate::domain::error::DomainError::EmbeddingAggregationFailed,
+        )?;
+        self.template_store.save(user, &template)?;
         Ok(())
     }
 }
@@ -77,8 +111,8 @@ mod tests {
     use crate::domain::error::DomainError;
     use crate::domain::{Embedding, Frame, PixelFormat, StreamModality};
     use crate::ports::{
-        EmbedError, Embedder, EmbeddingMatcher, Health, HealthStatus, StoreError, TemplateStore,
-        VideoSource,
+        CaptureError, CaptureSpec, EmbedError, Embedder, EmbeddingMatcher, Health, HealthStatus,
+        StoreError, TemplateStore, VideoSource,
     };
 
     struct OkHealth;
@@ -103,14 +137,16 @@ mod tests {
             StreamModality::Rgb
         }
 
-        fn next_frame(&self) -> Result<Frame, crate::ports::CaptureError> {
-            Ok(Frame {
+        fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError> {
+            let spec = spec.validate()?;
+            let f = Frame {
                 modality: StreamModality::Rgb,
                 width: 1,
                 height: 1,
                 format: PixelFormat::Gray8,
                 bytes: vec![0],
-            })
+            };
+            Ok(vec![f; spec.frame_count as usize])
         }
     }
 
@@ -170,6 +206,7 @@ mod tests {
             Arc::new(ConstEmbedder { out: embed_out }),
             template_store,
             Arc::new(ExactMatcher),
+            MultiFramePolicy::default(),
         )
     }
 
@@ -191,6 +228,7 @@ mod tests {
             }),
             store,
             Arc::new(ExactMatcher),
+            MultiFramePolicy::default(),
         );
         let err = app.ping().unwrap_err();
         assert!(err.to_string().contains("camera offline"));
@@ -267,6 +305,7 @@ mod tests {
             }),
             store,
             Arc::new(ExactMatcher),
+            MultiFramePolicy::default(),
         );
         let err = app.enroll(&UserId(5000)).unwrap_err();
         assert!(err.to_string().contains("camera offline"));

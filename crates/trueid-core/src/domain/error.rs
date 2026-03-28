@@ -7,4 +7,7 @@ pub enum DomainError {
 
     #[error("user already has an enrolled template")]
     AlreadyEnrolled,
+
+    #[error("could not aggregate embeddings from capture burst")]
+    EmbeddingAggregationFailed,
 }

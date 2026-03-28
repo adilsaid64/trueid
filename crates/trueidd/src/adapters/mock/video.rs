@@ -1,4 +1,4 @@
-use trueid_core::ports::{CaptureError, VideoSource};
+use trueid_core::ports::{CaptureError, CaptureSpec, VideoSource};
 use trueid_core::{Frame, PixelFormat, StreamModality};
 
 pub struct MockVideoSource {
@@ -24,7 +24,8 @@ impl VideoSource for MockVideoSource {
         self.frame.modality
     }
 
-    fn next_frame(&self) -> Result<Frame, CaptureError> {
-        Ok(self.frame.clone())
+    fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError> {
+        let spec = spec.validate()?;
+        Ok((0..spec.frame_count).map(|_| self.frame.clone()).collect())
     }
 }

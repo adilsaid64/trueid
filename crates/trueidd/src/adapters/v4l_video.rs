@@ -1,8 +1,7 @@
 //! V4L2 capture, output as RGB8 for the rest of the stack.
 //!
-//! Each `next_frame` opens the stream, grabs one buffer, stops, then decodes (so the LED isn't on
-//! the whole time). `dev` is kept so the fd stays valid; `stream` is listed after `dev` so it
-//! drops first.
+//! [`VideoSource::capture`] uses **one** stream session: dequeue warm-up frames without decoding,
+//! then dequeue kept frames, then `stop`. A single frame is [`CaptureSpec::single()`].
 
 use std::io;
 use std::sync::Mutex;
@@ -12,7 +11,7 @@ use v4l::io::traits::{CaptureStream, Stream as V4lStream};
 use v4l::io::userptr::Stream as UserptrStream;
 use v4l::video::Capture;
 use v4l::{Device, Format, FourCC};
-use trueid_core::ports::{CaptureError, VideoSource};
+use trueid_core::ports::{CaptureError, CaptureSpec, VideoSource};
 use trueid_core::{Frame, PixelFormat, StreamModality};
 
 pub struct V4lVideoSource {
@@ -31,7 +30,6 @@ struct V4lInner {
 
 impl V4lVideoSource {
     /// `/dev/video{index}`, requested size `width` x `height`. Tries MJPEG, then YUYV.
-    /// Decoding here only handles those two; whatever the driver sets is in `fourcc`.
     pub fn open_with_dimensions(
         index: u32,
         width: u32,
@@ -64,6 +62,22 @@ impl V4lVideoSource {
 
 fn io_to_capture(e: io::Error) -> CaptureError {
     CaptureError::Failed(e.to_string())
+}
+
+fn grab_raw_payload(inner: &mut V4lInner) -> Result<Vec<u8>, CaptureError> {
+    let (buf, meta) = inner.stream.next().map_err(io_to_capture)?;
+    let len = meta.bytesused as usize;
+    if len == 0 {
+        return Err(CaptureError::Failed("empty camera frame".into()));
+    }
+    if len > buf.len() {
+        return Err(CaptureError::Failed(format!(
+            "invalid frame length {} > {}",
+            len,
+            buf.len()
+        )));
+    }
+    Ok(buf[..len].to_vec())
 }
 
 fn matches_fourcc(f: &FourCC, tag: &[u8; 4]) -> bool {
@@ -99,7 +113,6 @@ fn decode_payload(
     }
 }
 
-// BT.601 limited range, per-pixel.
 #[inline]
 fn yuv_bt601_to_rgb(y: i32, u: i32, v: i32) -> (u8, u8, u8) {
     let c = y - 16;
@@ -162,8 +175,12 @@ impl VideoSource for V4lVideoSource {
         StreamModality::Rgb
     }
 
-    fn next_frame(&self) -> Result<Frame, CaptureError> {
-        let (fourcc, width, height, raw_payload) = {
+    fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError> {
+        let spec = spec.validate()?;
+        let warmup = spec.warmup_discard as usize;
+        let keep = spec.frame_count as usize;
+
+        let (fourcc, width, height, raws) = {
             let mut inner = self
                 .inner
                 .lock()
@@ -173,37 +190,36 @@ impl VideoSource for V4lVideoSource {
             let width = inner.width;
             let height = inner.height;
 
-            let capture_result = (|| -> Result<Vec<u8>, CaptureError> {
-                let (buf, meta) = inner.stream.next().map_err(io_to_capture)?;
-                let len = meta.bytesused as usize;
-                if len == 0 {
-                    return Err(CaptureError::Failed("empty camera frame".into()));
+            let burst_result = (|| -> Result<Vec<Vec<u8>>, CaptureError> {
+                for _ in 0..warmup {
+                    grab_raw_payload(&mut inner)?;
                 }
-                if len > buf.len() {
-                    return Err(CaptureError::Failed(format!(
-                        "invalid frame length {} > {}",
-                        len,
-                        buf.len()
-                    )));
+                let mut raws = Vec::with_capacity(keep);
+                for _ in 0..keep {
+                    raws.push(grab_raw_payload(&mut inner)?);
                 }
-                Ok(buf[..len].to_vec())
+                Ok(raws)
             })();
 
             let _ = inner.stream.stop();
 
-            match capture_result {
-                Ok(raw) => (fourcc, width, height, raw),
+            match burst_result {
+                Ok(raws) => (fourcc, width, height, raws),
                 Err(e) => return Err(e),
             }
         };
 
-        let bytes = decode_payload(&fourcc, &raw_payload, width, height)?;
-        Ok(Frame {
-            modality: StreamModality::Rgb,
-            width,
-            height,
-            format: PixelFormat::Rgb8,
-            bytes,
-        })
+        let mut frames = Vec::with_capacity(keep);
+        for raw in raws {
+            let bytes = decode_payload(&fourcc, &raw, width, height)?;
+            frames.push(Frame {
+                modality: StreamModality::Rgb,
+                width,
+                height,
+                format: PixelFormat::Rgb8,
+                bytes,
+            });
+        }
+        Ok(frames)
     }
 }
