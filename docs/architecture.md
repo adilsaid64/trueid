@@ -2,16 +2,14 @@
 
 ## Overview
 
-TrueID is a face authentication system with a small, modular core.
+Crates split **core** (ports + `TrueIdApp`) from **adapters** (camera, ONNX, files).
 
-Flow:
+Per captured frame, before matching:
 
-1. Capture frames from the camera (one session: warm-up + N frames)
-2. Convert frames to embeddings
-3. Compare against stored templates
-4. Return a decision
-
-Core logic is independent of camera, storage, and model implementations.
+1. Capture (one session: optional warm-up, then N frames)
+2. Detect face → align → liveness → embed
+3. Compare to stored template
+4. Return accept/reject
 
 ---
 
@@ -24,7 +22,10 @@ flowchart TD
 
     subgraph Ports
         Video[VideoSource]
-        Embedder[Embedder]
+        Det[FaceDetector]
+        Align[FaceAligner]
+        Live[LivenessChecker]
+        FaceEmb[FaceEmbedder]
         Matcher[Matcher]
         Store[TemplateStore]
     end
@@ -32,47 +33,59 @@ flowchart TD
     subgraph Adapters
         V4L[V4lVideoSource]
         MockVideo[MockVideoSource]
+        MockDet[FullFrameFaceDetector]
+        MockAlign[PassthroughFaceAligner]
+        MockLive[AlwaysLiveLiveness]
         Cosine[CosineMatcher]
         FileStore[FileTemplateStore]
-        MockEmbedder[MockEmbedder]
+        MockEmb[MockFaceEmbedder]
+        OnnxFace[OnnxFaceEmbedder]
     end
 
     IPC --> App
 
     App --> Video
-    App --> Embedder
+    App --> Det
+    App --> Align
+    App --> Live
+    App --> FaceEmb
     App --> Matcher
     App --> Store
 
     Video --> V4L
     Video --> MockVideo
+    Det --> MockDet
+    Align --> MockAlign
+    Live --> MockLive
     Matcher --> Cosine
     Store --> FileStore
-    Embedder --> MockEmbedder
-````
+    FaceEmb --> MockEmb
+    FaceEmb --> OnnxFace
+
+```
 
 ---
 
 ## Components
 
-* **TrueIdApp** — runs the auth pipeline
+* **TrueIdApp** — auth pipeline
 * **VideoSource** — `capture(CaptureSpec)` → frames
-* **Embedder** — frames → embeddings
+* **FaceDetector** — primary face → `FaceDetection`
+* **FaceAligner** — crop/warp to a standard face image
+* **LivenessChecker** — spoof check on aligned crop
+* **FaceEmbedder** — face image → embedding
 * **Matcher** — compare embeddings
-* **TemplateStore** — load/save templates
+* **TemplateStore** — persist templates
 
-Adapters implement these (V4L camera, file storage, mock components).
+Concrete behavior lives in adapters (V4L, mocks, ONNX, disk).
 
 ---
 
-## Capture Model
+## Capture model
 
-* One capture = one session
-* Optional warm-up frames (discarded)
-* Then N frames returned
-* No continuous streaming
-
-All frames are normalisd to `RGB8`.
+* One `capture` call = one camera session
+* Warm-up frames optional (dropped)
+* Then N frames returned; no continuous streaming
 
 ---
 
@@ -86,7 +99,7 @@ sequenceDiagram
     App->>Video: capture()
     Video-->>App: frames
 
-    App->>Embedder: embed
+    App->>App: detect → align → liveness → embed
     App->>Store: load template
     App->>Matcher: compare
 
