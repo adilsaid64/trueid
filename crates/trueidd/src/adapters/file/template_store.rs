@@ -18,7 +18,7 @@ pub struct FileTemplateStore {
 }
 
 impl FileTemplateStore {
-    /// `TRUEID_TEMPLATE_DIR`, else XDG data dir / `trueid/templates`.
+    /// Env `TRUEID_TEMPLATE_DIR`, or `$XDG_DATA_HOME/trueid/templates`.
     pub fn open_default() -> Result<Self, StoreError> {
         Self::open(template_dir()?)
     }

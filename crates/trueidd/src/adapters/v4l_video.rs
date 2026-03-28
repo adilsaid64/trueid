@@ -1,7 +1,6 @@
-//! V4L2 capture, output as RGB8 for the rest of the stack.
+//! V4L2 camera → RGB8 [`Frame`]s.
 //!
-//! [`VideoSource::capture`] uses **one** stream session: dequeue warm-up frames without decoding,
-//! then dequeue kept frames, then `stop`. A single frame is [`CaptureSpec::single()`].
+//! One `capture`: open stream, dequeue warm-up buffers (payload discarded), then kept frames, then stop.
 
 use std::io;
 use std::sync::Mutex;

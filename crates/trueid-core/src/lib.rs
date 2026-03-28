@@ -3,7 +3,13 @@ pub mod domain;
 pub mod ports;
 
 pub use application::app::{MultiFramePolicy, TrueIdApp};
-pub use ports::CaptureSpec;
+pub use ports::{
+    AlignError, CaptureSpec, DetectError, FaceAligner, FaceDetector, LivenessChecker,
+    LivenessError,
+};
 pub use application::error::AppError;
 pub use domain::error::DomainError;
-pub use domain::{Embedding, Frame, PixelFormat, StreamModality, UserId};
+pub use domain::{
+    BoundingBox, Embedding, FaceDetection, FaceLandmarks, Frame, PixelFormat, StreamModality,
+    UserId,
+};

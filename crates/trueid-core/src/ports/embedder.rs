@@ -8,6 +8,7 @@ pub enum EmbedError {
     Failed(String),
 }
 
+/// [`Frame`] → [`Embedding`]. Implemented in the daemon (ONNX, mock, …).
 pub trait Embedder: Send + Sync {
     fn embed(&self, frame: &Frame) -> Result<Embedding, EmbedError>;
 }

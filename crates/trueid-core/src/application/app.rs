@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
-use crate::domain::UserId;
+use crate::domain::{Embedding, Frame, UserId};
 use crate::ports::{
-    CaptureSpec, Embedder, EmbeddingMatcher, Health, HealthStatus, TemplateStore, VideoSource,
+    CaptureSpec, Embedder, EmbeddingMatcher, FaceAligner, FaceDetector, Health, HealthStatus,
+    LivenessChecker, LivenessError, TemplateStore, VideoSource,
 };
 
 use super::error::AppError;
 
-/// How many frames to discard (warm-up) and keep per enroll / verify.
-///
-/// Tuned for commodity webcams: warm-up lets exposure settle; multiple kept frames improve robustness.
+/// Warm-up and burst length for enroll vs verify.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MultiFramePolicy {
     pub enroll: CaptureSpec,
@@ -28,6 +27,9 @@ impl Default for MultiFramePolicy {
 pub struct TrueIdApp {
     health: Arc<dyn Health>,
     video: Arc<dyn VideoSource>,
+    detector: Arc<dyn FaceDetector>,
+    aligner: Arc<dyn FaceAligner>,
+    liveness: Arc<dyn LivenessChecker>,
     embedder: Arc<dyn Embedder>,
     template_store: Arc<dyn TemplateStore>,
     matcher: Arc<dyn EmbeddingMatcher>,
@@ -38,6 +40,9 @@ impl TrueIdApp {
     pub fn new(
         health: Arc<dyn Health>,
         video: Arc<dyn VideoSource>,
+        detector: Arc<dyn FaceDetector>,
+        aligner: Arc<dyn FaceAligner>,
+        liveness: Arc<dyn LivenessChecker>,
         embedder: Arc<dyn Embedder>,
         template_store: Arc<dyn TemplateStore>,
         matcher: Arc<dyn EmbeddingMatcher>,
@@ -46,11 +51,28 @@ impl TrueIdApp {
         Self {
             health,
             video,
+            detector,
+            aligner,
+            liveness,
             embedder,
             template_store,
             matcher,
             capture,
         }
+    }
+
+    /// Detect → align → liveness → embed. `None` if skipped (no face, not live, etc.).
+    fn try_embed_from_frame(&self, frame: &Frame) -> Result<Option<Embedding>, AppError> {
+        let Some(det) = self.detector.detect_primary(frame)? else {
+            return Ok(None);
+        };
+        let aligned = self.aligner.align(frame, &det)?;
+        match self.liveness.verify_live(&aligned) {
+            Ok(()) => {}
+            Err(LivenessError::NotLive) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
+        Ok(Some(self.embedder.embed(&aligned)?))
     }
 
     pub fn ping(&self) -> Result<(), AppError> {
@@ -73,7 +95,9 @@ impl TrueIdApp {
         };
 
         for frame in frames {
-            let probe = self.embedder.embed(&frame)?;
+            let Some(probe) = self.try_embed_from_frame(&frame)? else {
+                continue;
+            };
             if self.matcher.matches(&probe, &enrolled) {
                 return Ok(true);
             }
@@ -95,7 +119,12 @@ impl TrueIdApp {
         let frames = self.video.capture(spec)?;
         let mut embeddings = Vec::with_capacity(frames.len());
         for frame in &frames {
-            embeddings.push(self.embedder.embed(frame)?);
+            if let Some(e) = self.try_embed_from_frame(frame)? {
+                embeddings.push(e);
+            }
+        }
+        if embeddings.is_empty() {
+            return Err(crate::domain::error::DomainError::NoUsableFaceInCapture.into());
         }
         let template = crate::domain::Embedding::try_average(&embeddings).ok_or(
             crate::domain::error::DomainError::EmbeddingAggregationFailed,
@@ -108,11 +137,15 @@ impl TrueIdApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::error::AppError;
     use crate::domain::error::DomainError;
-    use crate::domain::{Embedding, Frame, PixelFormat, StreamModality};
+    use crate::domain::{
+        BoundingBox, Embedding, FaceDetection, Frame, PixelFormat, StreamModality,
+    };
     use crate::ports::{
-        CaptureError, CaptureSpec, EmbedError, Embedder, EmbeddingMatcher, Health, HealthStatus,
-        StoreError, TemplateStore, VideoSource,
+        AlignError, CaptureError, CaptureSpec, DetectError, EmbedError, Embedder, EmbeddingMatcher,
+        FaceAligner, FaceDetector, Health, HealthStatus, LivenessChecker, LivenessError, StoreError,
+        TemplateStore, VideoSource,
     };
 
     struct OkHealth;
@@ -160,6 +193,34 @@ mod tests {
         }
     }
 
+    /// Treats the full frame as one face (development / tests only).
+    struct FullFrameDetector;
+
+    impl FaceDetector for FullFrameDetector {
+        fn detect_primary(&self, _frame: &Frame) -> Result<Option<FaceDetection>, DetectError> {
+            Ok(Some(FaceDetection {
+                bbox: BoundingBox::full_frame(),
+                landmarks: None,
+            }))
+        }
+    }
+
+    struct CloneAligner;
+
+    impl FaceAligner for CloneAligner {
+        fn align(&self, frame: &Frame, _detection: &FaceDetection) -> Result<Frame, AlignError> {
+            Ok(frame.clone())
+        }
+    }
+
+    struct AlwaysLive;
+
+    impl LivenessChecker for AlwaysLive {
+        fn verify_live(&self, _aligned_face: &Frame) -> Result<(), LivenessError> {
+            Ok(())
+        }
+    }
+
     struct MemoryStore {
         inner: std::sync::Mutex<std::collections::HashMap<UserId, Embedding>>,
     }
@@ -203,6 +264,9 @@ mod tests {
         TrueIdApp::new(
             Arc::new(OkHealth),
             Arc::new(TestFrame),
+            Arc::new(FullFrameDetector),
+            Arc::new(CloneAligner),
+            Arc::new(AlwaysLive),
             Arc::new(ConstEmbedder { out: embed_out }),
             template_store,
             Arc::new(ExactMatcher),
@@ -223,6 +287,9 @@ mod tests {
         let app = TrueIdApp::new(
             Arc::new(BadHealth),
             Arc::new(TestFrame),
+            Arc::new(FullFrameDetector),
+            Arc::new(CloneAligner),
+            Arc::new(AlwaysLive),
             Arc::new(ConstEmbedder {
                 out: Embedding(vec![1.0]),
             }),
@@ -295,11 +362,44 @@ mod tests {
     }
 
     #[test]
+    fn enroll_fails_when_no_face_detected() {
+        struct NoFaceDetector;
+        impl FaceDetector for NoFaceDetector {
+            fn detect_primary(&self, _frame: &Frame) -> Result<Option<FaceDetection>, DetectError> {
+                Ok(None)
+            }
+        }
+
+        let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
+        let app = TrueIdApp::new(
+            Arc::new(OkHealth),
+            Arc::new(TestFrame),
+            Arc::new(NoFaceDetector),
+            Arc::new(CloneAligner),
+            Arc::new(AlwaysLive),
+            Arc::new(ConstEmbedder {
+                out: Embedding(vec![1.0, 0.0]),
+            }),
+            store,
+            Arc::new(ExactMatcher),
+            MultiFramePolicy::default(),
+        );
+        let err = app.enroll(&UserId(6000)).unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Domain(DomainError::NoUsableFaceInCapture)
+        ));
+    }
+
+    #[test]
     fn enroll_fails_when_unhealthy() {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(
             Arc::new(BadHealth),
             Arc::new(TestFrame),
+            Arc::new(FullFrameDetector),
+            Arc::new(CloneAligner),
+            Arc::new(AlwaysLive),
             Arc::new(ConstEmbedder {
                 out: Embedding(vec![1.0, 0.0]),
             }),

@@ -1,7 +1,9 @@
 use thiserror::Error;
 
 use crate::domain::error::DomainError;
-use crate::ports::{CaptureError, EmbedError, StoreError};
+use crate::ports::{
+    AlignError, CaptureError, DetectError, EmbedError, LivenessError, StoreError,
+};
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -13,6 +15,15 @@ pub enum AppError {
 
     #[error(transparent)]
     Capture(#[from] CaptureError),
+
+    #[error(transparent)]
+    Detect(#[from] DetectError),
+
+    #[error(transparent)]
+    Align(#[from] AlignError),
+
+    #[error(transparent)]
+    Liveness(#[from] LivenessError),
 
     #[error(transparent)]
     Embed(#[from] EmbedError),

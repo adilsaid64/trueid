@@ -8,6 +8,9 @@ pub enum DomainError {
     #[error("user already has an enrolled template")]
     AlreadyEnrolled,
 
-    #[error("could not aggregate embeddings from capture burst")]
+    #[error("could not average embeddings")]
     EmbeddingAggregationFailed,
+
+    #[error("no face passed the pipeline in this capture")]
+    NoUsableFaceInCapture,
 }

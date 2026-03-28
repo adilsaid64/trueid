@@ -8,9 +8,7 @@ pub enum CaptureError {
     Failed(String),
 }
 
-/// How many frames to discard (exposure / buffer settle) and how many to return from **one** capture session.
-///
-/// Implementations should keep the camera stream open for the whole call when the hardware allows it.
+/// Warm-up frames to drop, then frames to return, in one `capture` call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CaptureSpec {
     pub warmup_discard: u32,
@@ -25,7 +23,6 @@ impl CaptureSpec {
         }
     }
 
-    /// One frame, no warmup.
     pub const fn single() -> Self {
         Self {
             warmup_discard: 0,
@@ -46,7 +43,6 @@ impl CaptureSpec {
 pub trait VideoSource: Send + Sync {
     fn modality(&self) -> StreamModality;
 
-    /// One session: discard `warmup_discard` buffers (no decode), then dequeue `frame_count` buffers
-    /// and return decoded [`Frame`]s in order.
+    /// Drop `warmup_discard` buffers, then return `frame_count` decoded frames in order.
     fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError>;
 }

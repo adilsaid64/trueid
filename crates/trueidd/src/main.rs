@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use trueid_core::{Embedding, MultiFramePolicy, TrueIdApp};
+use trueid_core::ports::Embedder;
 use trueid_ipc::SOCKET_PATH;
 
 mod adapters;
@@ -17,6 +18,13 @@ fn parse_u32_env_positive(key: &str, default: u32) -> u32 {
         .and_then(|s| s.parse().ok())
         .filter(|&n| n > 0)
         .unwrap_or(default)
+}
+
+fn parse_match_threshold() -> f32 {
+    std::env::var("TRUEID_MATCH_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.45)
 }
 
 fn main() -> std::io::Result<()> {
@@ -49,17 +57,32 @@ fn main() -> std::io::Result<()> {
             })?,
         )
     };
-    let embedder = Arc::new(adapters::MockEmbedder::new(Embedding(vec![
-        1.0, 0.0, 0.0,
-    ])));
+    let embedder: Arc<dyn Embedder> =
+        if std::env::var("TRUEID_USE_MOCK_EMBEDDER")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            Arc::new(adapters::MockEmbedder::new(Embedding(vec![1.0, 0.0, 0.0])))
+        } else {
+            adapters::build_embedder().map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, e)
+            })?
+        };
     let template_store = Arc::new(adapters::FileTemplateStore::open_default().map_err(|e| {
         std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
     })?);
-    let matcher = Arc::new(adapters::CosineMatcher::new(0.99));
+    let matcher = Arc::new(adapters::CosineMatcher::new(parse_match_threshold()));
+
+    let detector = Arc::new(adapters::FullFrameFaceDetector);
+    let aligner = Arc::new(adapters::PassthroughFaceAligner);
+    let liveness = Arc::new(adapters::AlwaysLiveLiveness);
 
     let app = Arc::new(TrueIdApp::new(
         health,
         video,
+        detector,
+        aligner,
+        liveness,
         embedder,
         template_store,
         matcher,
