@@ -1,8 +1,6 @@
-//! ONNX face embedding with [tract](https://github.com/snipsco/tract).
+//! ONNX inference via tract.
 //!
 //! Input: float32 NCHW `[1,3,H,W]` or NHWC `[1,H,W,3]` (often 112×112).
-//!
-//! Call after alignment: input is usually an aligned face crop; passthrough aligner may pass full frames.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -224,7 +222,7 @@ pub fn default_model_path() -> Option<PathBuf> {
     Some(base.join("trueid/models/face_embedding.onnx"))
 }
 
-/// Load embedder from disk or return an error string.
+/// Load ONNX embedder from disk or return an error string.
 pub fn build_face_embedder() -> Result<Arc<dyn FaceEmbedder>, String> {
     let path = default_model_path().ok_or_else(|| {
         "TRUEID_FACE_MODEL not set and could not resolve XDG_DATA_HOME or HOME".to_string()
