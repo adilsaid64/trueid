@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use trueid_core::ports::{StoreError, TemplateStore};
 use trueid_core::{Embedding, UserId};
 
-/// On-disk template: one JSON file per uid under the store root.
 #[derive(Serialize, Deserialize)]
 struct TemplateFile {
     embedding: Vec<f32>,
@@ -15,17 +14,15 @@ struct TemplateFile {
 
 pub struct FileTemplateStore {
     root: PathBuf,
-    /// Serializes load/save (simple correctness; revisit if enroll/verify need to scale).
     lock: Mutex<()>,
 }
 
 impl FileTemplateStore {
-    /// Store root from `TRUEID_TEMPLATE_DIR`, or `$XDG_DATA_HOME/trueid/templates`, or `~/.local/share/trueid/templates`.
+    /// `TRUEID_TEMPLATE_DIR`, else XDG data dir / `trueid/templates`.
     pub fn open_default() -> Result<Self, StoreError> {
         Self::open(template_dir()?)
     }
 
-    /// Create store under `root` (directories are created if missing).
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let root = root.into();
         fs::create_dir_all(&root).map_err(|e| {
@@ -54,11 +51,7 @@ fn template_dir() -> Result<PathBuf, StoreError> {
         .or_else(|| {
             std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))
         })
-        .ok_or_else(|| {
-            StoreError::Failed(
-                "set HOME or TRUEID_TEMPLATE_DIR to pick a template directory".into(),
-            )
-        })?;
+        .ok_or_else(|| StoreError::Failed("HOME unset (or set TRUEID_TEMPLATE_DIR)".into()))?;
     Ok(base.join("trueid/templates"))
 }
 

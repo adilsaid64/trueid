@@ -1,3 +1,9 @@
+//! V4L2 capture, output as RGB8 for the rest of the stack.
+//!
+//! Each `next_frame` opens the stream, grabs one buffer, stops, then decodes (so the LED isn't on
+//! the whole time). `dev` is kept so the fd stays valid; `stream` is listed after `dev` so it
+//! drops first.
+
 use std::io;
 use std::sync::Mutex;
 
@@ -14,7 +20,9 @@ pub struct V4lVideoSource {
 }
 
 struct V4lInner {
-    _dev: Device,
+    // Holds the device open; stream uses the same fd.
+    #[allow(dead_code)]
+    dev: Device,
     stream: UserptrStream,
     width: u32,
     height: u32,
@@ -22,17 +30,19 @@ struct V4lInner {
 }
 
 impl V4lVideoSource {
-    /// Open `/dev/video{index}` for **RGB** capture (MJPEG or YUYV → RGB8).
-    ///
-    /// Which physical sensor that is (RGB vs IR) depends on how your kernel enumerates devices;
-    /// use `v4l2-ctl --list-devices` and pick the index that matches the RGB node.
-    pub fn open(index: u32) -> Result<Self, CaptureError> {
+    /// `/dev/video{index}`, requested size `width` x `height`. Tries MJPEG, then YUYV.
+    /// Decoding here only handles those two; whatever the driver sets is in `fourcc`.
+    pub fn open_with_dimensions(
+        index: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, CaptureError> {
         let dev = Device::new(index as usize).map_err(io_to_capture)?;
-        let mjpg = Format::new(640, 480, FourCC::new(b"MJPG"));
+        let mjpg = Format::new(width, height, FourCC::new(b"MJPG"));
         let active = match dev.set_format(&mjpg) {
             Ok(f) => f,
             Err(_) => {
-                let yuyv = Format::new(640, 480, FourCC::new(b"YUYV"));
+                let yuyv = Format::new(width, height, FourCC::new(b"YUYV"));
                 dev.set_format(&yuyv).map_err(io_to_capture)?
             }
         };
@@ -42,7 +52,7 @@ impl V4lVideoSource {
 
         Ok(Self {
             inner: Mutex::new(V4lInner {
-                _dev: dev,
+                dev,
                 stream,
                 width: active.width,
                 height: active.height,
@@ -56,7 +66,7 @@ fn io_to_capture(e: io::Error) -> CaptureError {
     CaptureError::Failed(e.to_string())
 }
 
-fn fourcc_is(f: &FourCC, tag: &[u8; 4]) -> bool {
+fn matches_fourcc(f: &FourCC, tag: &[u8; 4]) -> bool {
     f.repr == *tag
 }
 
@@ -66,7 +76,7 @@ fn decode_payload(
     width: u32,
     height: u32,
 ) -> Result<Vec<u8>, CaptureError> {
-    if fourcc_is(fourcc, b"MJPG") {
+    if matches_fourcc(fourcc, b"MJPG") {
         let img = image::load_from_memory_with_format(payload, image::ImageFormat::Jpeg).map_err(
             |e| CaptureError::Failed(format!("mjpeg decode: {e}")),
         )?;
@@ -79,17 +89,38 @@ fn decode_payload(
             )));
         }
         Ok(rgb.into_raw())
-    } else if fourcc_is(fourcc, b"YUYV") {
+    } else if matches_fourcc(fourcc, b"YUYV") {
         yuyv_to_rgb(payload, width, height)
     } else {
         Err(CaptureError::Failed(format!(
-            "unsupported pixel format (fourcc {:?})",
+            "unsupported fourcc {:?} (want MJPG or YUYV)",
             fourcc.str().unwrap_or("?")
         )))
     }
 }
 
+// BT.601 limited range, per-pixel.
+#[inline]
+fn yuv_bt601_to_rgb(y: i32, u: i32, v: i32) -> (u8, u8, u8) {
+    let c = y - 16;
+    let d = u - 128;
+    let e = v - 128;
+    let r = (298 * c + 409 * e + 128) >> 8;
+    let g = (298 * c - 100 * d - 208 * e + 128) >> 8;
+    let b = (298 * c + 516 * d + 128) >> 8;
+    (
+        r.clamp(0, 255) as u8,
+        g.clamp(0, 255) as u8,
+        b.clamp(0, 255) as u8,
+    )
+}
+
 fn yuyv_to_rgb(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CaptureError> {
+    if width % 2 != 0 {
+        return Err(CaptureError::Failed(format!(
+            "YUYV requires even width, got {width}"
+        )));
+    }
     let w = width as usize;
     let h = height as usize;
     let expected = w * h * 2;
@@ -99,22 +130,19 @@ fn yuyv_to_rgb(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CaptureE
             data.len()
         )));
     }
+    let data = &data[..expected];
+
     let mut out = vec![0u8; w * h * 3];
     for row in 0..h {
         for col in (0..w).step_by(2) {
             let i = row * w * 2 + col * 2;
             let y0 = data[i] as i32;
-            let u = data[i + 1] as i32 - 128;
+            let u = data[i + 1] as i32;
             let y1 = data[i + 2] as i32;
-            let v = data[i + 3] as i32 - 128;
+            let v = data[i + 3] as i32;
 
-            let r0 = (y0 + ((359 * v) >> 8)).clamp(0, 255) as u8;
-            let g0 = (y0 - ((88 * u + 183 * v) >> 8)).clamp(0, 255) as u8;
-            let b0 = (y0 + ((454 * u) >> 8)).clamp(0, 255) as u8;
-
-            let r1 = (y1 + ((359 * v) >> 8)).clamp(0, 255) as u8;
-            let g1 = (y1 - ((88 * u + 183 * v) >> 8)).clamp(0, 255) as u8;
-            let b1 = (y1 + ((454 * u) >> 8)).clamp(0, 255) as u8;
+            let (r0, g0, b0) = yuv_bt601_to_rgb(y0, u, v);
+            let (r1, g1, b1) = yuv_bt601_to_rgb(y1, u, v);
 
             let o0 = (row * w + col) * 3;
             out[o0] = r0;
@@ -135,37 +163,47 @@ impl VideoSource for V4lVideoSource {
     }
 
     fn next_frame(&self) -> Result<Frame, CaptureError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| CaptureError::Failed("camera mutex poisoned".to_string()))?;
-        let fourcc = inner.fourcc;
-        let width = inner.width;
-        let height = inner.height;
+        let (fourcc, width, height, raw_payload) = {
+            let mut inner = self
+                .inner
+                .lock()
+                .map_err(|_| CaptureError::Failed("camera mutex poisoned".to_string()))?;
 
-        let capture = (|| -> Result<Frame, CaptureError> {
-            let (buf, meta) = inner.stream.next().map_err(io_to_capture)?;
-            let len = meta.bytesused as usize;
-            if len > buf.len() {
-                return Err(CaptureError::Failed(format!(
-                    "invalid frame length {} > {}",
-                    len,
-                    buf.len()
-                )));
+            let fourcc = inner.fourcc;
+            let width = inner.width;
+            let height = inner.height;
+
+            let capture_result = (|| -> Result<Vec<u8>, CaptureError> {
+                let (buf, meta) = inner.stream.next().map_err(io_to_capture)?;
+                let len = meta.bytesused as usize;
+                if len == 0 {
+                    return Err(CaptureError::Failed("empty camera frame".into()));
+                }
+                if len > buf.len() {
+                    return Err(CaptureError::Failed(format!(
+                        "invalid frame length {} > {}",
+                        len,
+                        buf.len()
+                    )));
+                }
+                Ok(buf[..len].to_vec())
+            })();
+
+            let _ = inner.stream.stop();
+
+            match capture_result {
+                Ok(raw) => (fourcc, width, height, raw),
+                Err(e) => return Err(e),
             }
-            let payload = &buf[..len];
-            let bytes = decode_payload(&fourcc, payload, width, height)?;
-            Ok(Frame {
-                modality: StreamModality::Rgb,
-                width,
-                height,
-                format: PixelFormat::Rgb8,
-                bytes,
-            })
-        })();
+        };
 
-        // End streaming so the sensor / LED are idle until the next enroll or verify.
-        let _ = inner.stream.stop();
-        capture
+        let bytes = decode_payload(&fourcc, &raw_payload, width, height)?;
+        Ok(Frame {
+            modality: StreamModality::Rgb,
+            width,
+            height,
+            format: PixelFormat::Rgb8,
+            bytes,
+        })
     }
 }

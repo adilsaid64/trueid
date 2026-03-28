@@ -9,9 +9,16 @@ use trueid_ipc::SOCKET_PATH;
 mod adapters;
 mod ipc;
 
-/// V4L device index when `TRUEID_CAMERA_INDEX` is unset (`/dev/video{N}`).
-/// `0` is typical for the RGB webcam; use `TRUEID_CAMERA_INDEX=2` if your IR node is the capture device.
+// `/dev/video{N}` when `TRUEID_CAMERA_INDEX` unset.
 const DEFAULT_CAMERA_INDEX: u32 = 0;
+
+fn parse_u32_env_positive(key: &str, default: u32) -> u32 {
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(default)
+}
 
 fn main() -> std::io::Result<()> {
     if Path::new(SOCKET_PATH).exists() {
@@ -29,8 +36,10 @@ fn main() -> std::io::Result<()> {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_CAMERA_INDEX);
+        let cap_w = parse_u32_env_positive("TRUEID_CAPTURE_WIDTH", 640);
+        let cap_h = parse_u32_env_positive("TRUEID_CAPTURE_HEIGHT", 480);
         Arc::new(
-            adapters::V4lVideoSource::open(index).map_err(|e| {
+            adapters::V4lVideoSource::open_with_dimensions(index, cap_w, cap_h).map_err(|e| {
                 std::io::Error::new(
                     std::io::ErrorKind::Other,
                     format!(

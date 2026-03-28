@@ -11,5 +11,6 @@ pub enum CaptureError {
 pub trait VideoSource: Send + Sync {
     fn modality(&self) -> StreamModality;
 
+    /// One frame. Implementations vary (single grab vs streaming); don't assume preview semantics.
     fn next_frame(&self) -> Result<Frame, CaptureError>;
 }
