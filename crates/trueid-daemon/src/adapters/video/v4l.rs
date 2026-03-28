@@ -28,21 +28,21 @@ struct V4lInner {
 }
 
 impl V4lVideoSource {
-    /// `/dev/video{index}`, requested size `width` x `height`. Tries MJPEG, then YUYV.
+    /// `/dev/video{index}`, requested size `width` x `height`.
+    ///
+    /// Tries MJPEG, YUYV, then 8-bit grey (`GREY` / `Y800`). IR-only nodes often negotiate grey.
     pub fn open_with_dimensions(
         index: u32,
         width: u32,
         height: u32,
     ) -> Result<Self, CaptureError> {
         let dev = Device::new(index as usize).map_err(io_to_capture)?;
-        let mjpg = Format::new(width, height, FourCC::new(b"MJPG"));
-        let active = match dev.set_format(&mjpg) {
-            Ok(f) => f,
-            Err(_) => {
-                let yuyv = Format::new(width, height, FourCC::new(b"YUYV"));
-                dev.set_format(&yuyv).map_err(io_to_capture)?
-            }
-        };
+        let active = dev
+            .set_format(&Format::new(width, height, FourCC::new(b"MJPG")))
+            .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"YUYV"))))
+            .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"GREY"))))
+            .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"Y800"))))
+            .map_err(io_to_capture)?;
 
         let stream =
             UserptrStream::with_buffers(&dev, Type::VideoCapture, 4).map_err(io_to_capture)?;
@@ -104,12 +104,35 @@ fn decode_payload(
         Ok(rgb.into_raw())
     } else if matches_fourcc(fourcc, b"YUYV") {
         yuyv_to_rgb(payload, width, height)
+    } else if matches_fourcc(fourcc, b"GREY") || matches_fourcc(fourcc, b"Y800") {
+        grey8_to_rgb(payload, width, height)
     } else {
         Err(CaptureError::Failed(format!(
-            "unsupported fourcc {:?} (want MJPG or YUYV)",
+            "unsupported fourcc {:?} (want MJPG, YUYV, GREY, or Y800)",
             fourcc.str().unwrap_or("?")
         )))
     }
+}
+
+fn grey8_to_rgb(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CaptureError> {
+    let w = width as usize;
+    let h = height as usize;
+    let expected = w.checked_mul(h).ok_or_else(|| {
+        CaptureError::Failed("grey frame dimensions overflow".into())
+    })?;
+    if data.len() < expected {
+        return Err(CaptureError::Failed(format!(
+            "grey buffer too short: {} < {expected}",
+            data.len()
+        )));
+    }
+    let mut out = Vec::with_capacity(expected * 3);
+    for &g in &data[..expected] {
+        out.push(g);
+        out.push(g);
+        out.push(g);
+    }
+    Ok(out)
 }
 
 #[inline]
