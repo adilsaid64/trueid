@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use trueid_core::{Embedding, MultiFramePolicy, TrueIdApp};
-use trueid_core::ports::Embedder;
+use trueid_core::ports::FaceEmbedder;
 use trueid_ipc::SOCKET_PATH;
 
 mod adapters;
@@ -57,14 +57,14 @@ fn main() -> std::io::Result<()> {
             })?,
         )
     };
-    let embedder: Arc<dyn Embedder> =
+    let face_embedder: Arc<dyn FaceEmbedder> =
         if std::env::var("TRUEID_USE_MOCK_EMBEDDER")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
         {
-            Arc::new(adapters::MockEmbedder::new(Embedding(vec![1.0, 0.0, 0.0])))
+            Arc::new(adapters::MockFaceEmbedder::new(Embedding(vec![1.0, 0.0, 0.0])))
         } else {
-            adapters::build_embedder().map_err(|e| {
+            adapters::build_face_embedder().map_err(|e| {
                 std::io::Error::new(std::io::ErrorKind::Other, e)
             })?
         };
@@ -83,7 +83,7 @@ fn main() -> std::io::Result<()> {
         detector,
         aligner,
         liveness,
-        embedder,
+        face_embedder,
         template_store,
         matcher,
         MultiFramePolicy::default(),

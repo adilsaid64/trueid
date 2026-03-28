@@ -4,8 +4,8 @@ pub mod ports;
 
 pub use application::app::{MultiFramePolicy, TrueIdApp};
 pub use ports::{
-    AlignError, CaptureSpec, DetectError, FaceAligner, FaceDetector, LivenessChecker,
-    LivenessError,
+    AlignError, CaptureSpec, DetectError, FaceAligner, FaceDetector, FaceEmbedError, FaceEmbedder,
+    LivenessChecker, LivenessError,
 };
 pub use application::error::AppError;
 pub use domain::error::DomainError;

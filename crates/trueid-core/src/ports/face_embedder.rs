@@ -3,12 +3,12 @@ use thiserror::Error;
 use crate::domain::{Embedding, Frame};
 
 #[derive(Debug, Error)]
-pub enum EmbedError {
+pub enum FaceEmbedError {
     #[error("{0}")]
     Failed(String),
 }
 
 /// [`Frame`] → [`Embedding`]. Implemented in the daemon (ONNX, mock, …).
-pub trait Embedder: Send + Sync {
-    fn embed(&self, frame: &Frame) -> Result<Embedding, EmbedError>;
+pub trait FaceEmbedder: Send + Sync {
+    fn embed(&self, frame: &Frame) -> Result<Embedding, FaceEmbedError>;
 }

@@ -1,15 +1,18 @@
 //! ONNX face embedding with [tract](https://github.com/snipsco/tract).
 //!
 //! Input: float32 NCHW `[1,3,H,W]` or NHWC `[1,H,W,3]` (often 112×112).
+//!
+//! Call after alignment: input is usually an aligned face crop; passthrough aligner may pass full frames.
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use image::{imageops::FilterType, DynamicImage, Rgb, RgbImage};
 use tract_onnx::prelude::*;
-use trueid_core::ports::{EmbedError, Embedder};
+use trueid_core::ports::{FaceEmbedError, FaceEmbedder};
 use trueid_core::{Embedding, Frame, PixelFormat};
 
-/// [`Embedder`] via ONNX.
+/// [`FaceEmbedder`] via ONNX.
 pub struct OnnxFaceEmbedder {
     model: std::sync::Mutex<TypedRunnableModel<TypedModel>>,
     layout: InputLayout,
@@ -24,19 +27,19 @@ enum InputLayout {
 }
 
 impl OnnxFaceEmbedder {
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, EmbedError> {
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, FaceEmbedError> {
         let path = path.as_ref();
         let model = tract_onnx::onnx()
             .model_for_path(path)
-            .map_err(|e| EmbedError::Failed(format!("load onnx {path:?}: {e}")))?
+            .map_err(|e| FaceEmbedError::Failed(format!("load onnx {path:?}: {e}")))?
             .into_optimized()
-            .map_err(|e| EmbedError::Failed(format!("optimize onnx {path:?}: {e}")))?;
+            .map_err(|e| FaceEmbedError::Failed(format!("optimize onnx {path:?}: {e}")))?;
 
         let fact = model
             .input_fact(0)
-            .map_err(|e| EmbedError::Failed(format!("input fact: {e}")))?;
+            .map_err(|e| FaceEmbedError::Failed(format!("input fact: {e}")))?;
         if fact.datum_type != DatumType::F32 {
-            return Err(EmbedError::Failed(format!(
+            return Err(FaceEmbedError::Failed(format!(
                 "expected f32 model input, got {:?}",
                 fact.datum_type
             )));
@@ -46,7 +49,7 @@ impl OnnxFaceEmbedder {
             .shape
             .as_concrete()
             .ok_or_else(|| {
-                EmbedError::Failed(
+                FaceEmbedError::Failed(
                     "model input shape must be fully known (fix batch or export a fixed-shape ONNX)"
                         .into(),
                 )
@@ -56,7 +59,7 @@ impl OnnxFaceEmbedder {
 
         let model = model
             .into_runnable()
-            .map_err(|e| EmbedError::Failed(format!("runnable: {e}")))?;
+            .map_err(|e| FaceEmbedError::Failed(format!("runnable: {e}")))?;
 
         Ok(Self {
             model: std::sync::Mutex::new(model),
@@ -67,7 +70,7 @@ impl OnnxFaceEmbedder {
     }
 }
 
-fn interpret_input_shape(shape: &[usize]) -> Result<(InputLayout, usize, usize), EmbedError> {
+fn interpret_input_shape(shape: &[usize]) -> Result<(InputLayout, usize, usize), FaceEmbedError> {
     match shape.len() {
         4 => {
             if shape[1] == 3 && shape[2] != 3 {
@@ -75,12 +78,12 @@ fn interpret_input_shape(shape: &[usize]) -> Result<(InputLayout, usize, usize),
             } else if shape[3] == 3 {
                 Ok((InputLayout::Nhwc, shape[1], shape[2]))
             } else {
-                Err(EmbedError::Failed(format!(
+                Err(FaceEmbedError::Failed(format!(
                     "unrecognized 4D input shape {shape:?}: expected [1,3,H,W] or [1,H,W,3]"
                 )))
             }
         }
-        n => Err(EmbedError::Failed(format!(
+        n => Err(FaceEmbedError::Failed(format!(
             "expected rank-4 ONNX input, got rank {n} shape {shape:?}"
         ))),
     }
@@ -91,7 +94,7 @@ fn normalize_arcface_rgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     ((r - 127.5) / 128.0, (g - 127.5) / 128.0, (b - 127.5) / 128.0)
 }
 
-fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, EmbedError> {
+fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, FaceEmbedError> {
     let w = frame.width as usize;
     let h = frame.height as usize;
     match frame.format {
@@ -99,9 +102,9 @@ fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, EmbedError> {
             let expected = w
                 .checked_mul(h)
                 .and_then(|n| n.checked_mul(3))
-                .ok_or_else(|| EmbedError::Failed("frame dimensions overflow".into()))?;
+                .ok_or_else(|| FaceEmbedError::Failed("frame dimensions overflow".into()))?;
             if frame.bytes.len() != expected {
-                return Err(EmbedError::Failed(format!(
+                return Err(FaceEmbedError::Failed(format!(
                     "rgb8 length {} != {}×{}×3",
                     frame.bytes.len(),
                     frame.width,
@@ -109,12 +112,12 @@ fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, EmbedError> {
                 )));
             }
             RgbImage::from_raw(frame.width, frame.height, frame.bytes.clone()).ok_or_else(|| {
-                EmbedError::Failed("invalid rgb8 buffer".into())
+                FaceEmbedError::Failed("invalid rgb8 buffer".into())
             })
         }
         PixelFormat::Gray8 => {
             if frame.bytes.len() != w * h {
-                return Err(EmbedError::Failed(format!(
+                return Err(FaceEmbedError::Failed(format!(
                     "gray8 length {} != {}×{}",
                     frame.bytes.len(),
                     frame.width,
@@ -138,7 +141,7 @@ fn build_input_tensor(
     layout: InputLayout,
     out_h: usize,
     out_w: usize,
-) -> Result<Tensor, EmbedError> {
+) -> Result<Tensor, FaceEmbedError> {
     let dyn_img = DynamicImage::ImageRgb8(rgb);
     let resized = dyn_img.resize_exact(out_w as u32, out_h as u32, FilterType::Triangle);
     let resized = resized.to_rgb8();
@@ -172,7 +175,7 @@ fn build_input_tensor(
             Tensor::from_shape(&[1, out_h, out_w, 3], &data)
         }
     }
-    .map_err(|e| EmbedError::Failed(format!("build tensor: {e}")))
+    .map_err(|e| FaceEmbedError::Failed(format!("build tensor: {e}")))
 }
 
 fn l2_normalize(mut v: Vec<f32>) -> Vec<f32> {
@@ -185,8 +188,8 @@ fn l2_normalize(mut v: Vec<f32>) -> Vec<f32> {
     v
 }
 
-impl Embedder for OnnxFaceEmbedder {
-    fn embed(&self, frame: &Frame) -> Result<Embedding, EmbedError> {
+impl FaceEmbedder for OnnxFaceEmbedder {
+    fn embed(&self, frame: &Frame) -> Result<Embedding, FaceEmbedError> {
         let rgb = frame_to_rgb_image(frame)?;
         let tensor = build_input_tensor(rgb, self.layout, self.input_h, self.input_w)?;
         let input = tensor.into_tvalue();
@@ -194,17 +197,17 @@ impl Embedder for OnnxFaceEmbedder {
         let outputs = self
             .model
             .lock()
-            .map_err(|_| EmbedError::Failed("embedder lock poisoned".into()))?
+            .map_err(|_| FaceEmbedError::Failed("embedder lock poisoned".into()))?
             .run(tvec!(input))
-            .map_err(|e| EmbedError::Failed(format!("inference: {e}")))?;
+            .map_err(|e| FaceEmbedError::Failed(format!("inference: {e}")))?;
 
         let first = outputs
             .get(0)
-            .ok_or_else(|| EmbedError::Failed("model returned no outputs".into()))?;
+            .ok_or_else(|| FaceEmbedError::Failed("model returned no outputs".into()))?;
 
         let view = first
             .to_array_view::<f32>()
-            .map_err(|e| EmbedError::Failed(format!("output dtype: {e}")))?;
+            .map_err(|e| FaceEmbedError::Failed(format!("output dtype: {e}")))?;
         let flat: Vec<f32> = view.iter().copied().collect();
         Ok(Embedding(l2_normalize(flat)))
     }
@@ -222,7 +225,7 @@ pub fn default_model_path() -> Option<PathBuf> {
 }
 
 /// Load embedder from disk or return an error string.
-pub fn build_embedder() -> Result<Arc<dyn Embedder>, String> {
+pub fn build_face_embedder() -> Result<Arc<dyn FaceEmbedder>, String> {
     let path = default_model_path().ok_or_else(|| {
         "TRUEID_FACE_MODEL not set and could not resolve XDG_DATA_HOME or HOME".to_string()
     })?;

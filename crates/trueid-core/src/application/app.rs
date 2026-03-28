@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::domain::{Embedding, Frame, UserId};
 use crate::ports::{
-    CaptureSpec, Embedder, EmbeddingMatcher, FaceAligner, FaceDetector, Health, HealthStatus,
+    CaptureSpec, EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedder, Health, HealthStatus,
     LivenessChecker, LivenessError, TemplateStore, VideoSource,
 };
 
@@ -30,7 +30,7 @@ pub struct TrueIdApp {
     detector: Arc<dyn FaceDetector>,
     aligner: Arc<dyn FaceAligner>,
     liveness: Arc<dyn LivenessChecker>,
-    embedder: Arc<dyn Embedder>,
+    face_embedder: Arc<dyn FaceEmbedder>,
     template_store: Arc<dyn TemplateStore>,
     matcher: Arc<dyn EmbeddingMatcher>,
     capture: MultiFramePolicy,
@@ -43,7 +43,7 @@ impl TrueIdApp {
         detector: Arc<dyn FaceDetector>,
         aligner: Arc<dyn FaceAligner>,
         liveness: Arc<dyn LivenessChecker>,
-        embedder: Arc<dyn Embedder>,
+        face_embedder: Arc<dyn FaceEmbedder>,
         template_store: Arc<dyn TemplateStore>,
         matcher: Arc<dyn EmbeddingMatcher>,
         capture: MultiFramePolicy,
@@ -54,7 +54,7 @@ impl TrueIdApp {
             detector,
             aligner,
             liveness,
-            embedder,
+            face_embedder,
             template_store,
             matcher,
             capture,
@@ -72,7 +72,7 @@ impl TrueIdApp {
             Err(LivenessError::NotLive) => return Ok(None),
             Err(e) => return Err(e.into()),
         }
-        Ok(Some(self.embedder.embed(&aligned)?))
+        Ok(Some(self.face_embedder.embed(&aligned)?))
     }
 
     pub fn ping(&self) -> Result<(), AppError> {
@@ -143,7 +143,8 @@ mod tests {
         BoundingBox, Embedding, FaceDetection, Frame, PixelFormat, StreamModality,
     };
     use crate::ports::{
-        AlignError, CaptureError, CaptureSpec, DetectError, EmbedError, Embedder, EmbeddingMatcher,
+        AlignError, CaptureError, CaptureSpec, DetectError, EmbeddingMatcher, FaceEmbedError,
+        FaceEmbedder,
         FaceAligner, FaceDetector, Health, HealthStatus, LivenessChecker, LivenessError, StoreError,
         TemplateStore, VideoSource,
     };
@@ -183,12 +184,12 @@ mod tests {
         }
     }
 
-    struct ConstEmbedder {
+    struct ConstFaceEmbedder {
         out: Embedding,
     }
 
-    impl Embedder for ConstEmbedder {
-        fn embed(&self, _frame: &Frame) -> Result<Embedding, EmbedError> {
+    impl FaceEmbedder for ConstFaceEmbedder {
+        fn embed(&self, _frame: &Frame) -> Result<Embedding, FaceEmbedError> {
             Ok(self.out.clone())
         }
     }
@@ -267,7 +268,7 @@ mod tests {
             Arc::new(FullFrameDetector),
             Arc::new(CloneAligner),
             Arc::new(AlwaysLive),
-            Arc::new(ConstEmbedder { out: embed_out }),
+            Arc::new(ConstFaceEmbedder { out: embed_out }),
             template_store,
             Arc::new(ExactMatcher),
             MultiFramePolicy::default(),
@@ -290,7 +291,7 @@ mod tests {
             Arc::new(FullFrameDetector),
             Arc::new(CloneAligner),
             Arc::new(AlwaysLive),
-            Arc::new(ConstEmbedder {
+            Arc::new(ConstFaceEmbedder {
                 out: Embedding(vec![1.0]),
             }),
             store,
@@ -377,7 +378,7 @@ mod tests {
             Arc::new(NoFaceDetector),
             Arc::new(CloneAligner),
             Arc::new(AlwaysLive),
-            Arc::new(ConstEmbedder {
+            Arc::new(ConstFaceEmbedder {
                 out: Embedding(vec![1.0, 0.0]),
             }),
             store,
@@ -400,7 +401,7 @@ mod tests {
             Arc::new(FullFrameDetector),
             Arc::new(CloneAligner),
             Arc::new(AlwaysLive),
-            Arc::new(ConstEmbedder {
+            Arc::new(ConstFaceEmbedder {
                 out: Embedding(vec![1.0, 0.0]),
             }),
             store,
