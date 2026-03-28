@@ -1,1 +1,3 @@
 /target
+# Large ONNX fixtures (download locally; see tests/yunet_shapes.rs)
+/tests/fixtures/*.onnx

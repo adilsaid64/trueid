@@ -34,6 +34,7 @@ flowchart TD
         V4L[V4lVideoSource]
         MockVideo[MockVideoSource]
         MockDet[FullFrameFaceDetector]
+        YuNet[OnnxYuNetDetector]
         MockAlign[PassthroughFaceAligner]
         MockLive[AlwaysLiveLiveness]
         Cosine[CosineMatcher]
@@ -55,6 +56,7 @@ flowchart TD
     Video --> V4L
     Video --> MockVideo
     Det --> MockDet
+    Det --> YuNet
     Align --> MockAlign
     Live --> MockLive
     Matcher --> Cosine

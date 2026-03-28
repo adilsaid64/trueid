@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use trueid_core::{Embedding, MultiFramePolicy, TrueIdApp};
-use trueid_core::ports::FaceEmbedder;
+use trueid_core::ports::{FaceDetector, FaceEmbedder};
 use trueid_ipc::SOCKET_PATH;
 
 mod adapters;
@@ -73,7 +73,17 @@ fn main() -> std::io::Result<()> {
     })?);
     let matcher = Arc::new(adapters::CosineMatcher::new(parse_match_threshold()));
 
-    let detector = Arc::new(adapters::FullFrameFaceDetector);
+    let detector: Arc<dyn FaceDetector> =
+        if std::env::var("TRUEID_USE_MOCK_DETECTOR")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            Arc::new(adapters::FullFrameFaceDetector)
+        } else {
+            adapters::build_face_detector().map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, e)
+            })?
+        };
     let aligner = Arc::new(adapters::PassthroughFaceAligner);
     let liveness = Arc::new(adapters::AlwaysLiveLiveness);
 

@@ -10,7 +10,7 @@ mod template_store;
 mod video;
 
 pub use face_aligner::PassthroughFaceAligner;
-pub use face_detector::FullFrameFaceDetector;
+pub use face_detector::{build_face_detector, FullFrameFaceDetector};
 pub use face_embedder::{build_face_embedder, MockFaceEmbedder};
 pub use health::DefaultHealth;
 pub use liveness::AlwaysLiveLiveness;
