@@ -1486,15 +1486,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "trueid-ipc"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "trueidctl"
+name = "trueid-ctl"
 version = "0.1.0"
 dependencies = [
  "clap",
@@ -1504,7 +1496,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "trueidd"
+name = "trueid-daemon"
 version = "0.1.0"
 dependencies = [
  "image",
@@ -1514,6 +1506,14 @@ dependencies = [
  "trueid-core",
  "trueid-ipc",
  "v4l",
+]
+
+[[package]]
+name = "trueid-ipc"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

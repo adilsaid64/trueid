@@ -12,7 +12,7 @@ fn current_uid() -> u32 {
 }
 
 #[derive(Parser)]
-#[command(version, about = "TrueID control tool", long_about = None)]
+#[command(name = "trueid-ctl", version, about = "TrueID control tool", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -50,7 +50,7 @@ fn main() {
                 std::process::exit(1);
             }
             Err(e) => {
-                eprintln!("failed to reach trueidd: {e}");
+                eprintln!("failed to reach trueid-daemon: {e}");
                 std::process::exit(1);
             }
         },
@@ -74,7 +74,7 @@ fn main() {
                     std::process::exit(1);
                 }
                 Err(e) => {
-                    eprintln!("failed to reach trueidd: {e}");
+                    eprintln!("failed to reach trueid-daemon: {e}");
                     std::process::exit(1);
                 }
             }
@@ -94,13 +94,13 @@ fn main() {
                     std::process::exit(1);
                 }
                 Err(e) => {
-                    eprintln!("failed to reach trueidd: {e}");
+                    eprintln!("failed to reach trueid-daemon: {e}");
                     std::process::exit(1);
                 }
             }
         }
         None => {
-            eprintln!("No subcommand. Try `trueidctl ping` or `--help`.");
+            eprintln!("No subcommand. Try `trueid-ctl ping` or `--help`.");
             std::process::exit(2);
         }
     }

@@ -7,7 +7,7 @@ use trueid_ipc::{IPC_PROTOCOL_VERSION, Request, Response};
 
 pub fn run_unix_socket(path: &str, app: Arc<TrueIdApp>) -> std::io::Result<()> {
     let listener = UnixListener::bind(path)?;
-    eprintln!("trueidd listening on {path} (ipc protocol v{IPC_PROTOCOL_VERSION})");
+    eprintln!("trueid-daemon listening on {path} (ipc protocol v{IPC_PROTOCOL_VERSION})");
 
     for stream in listener.incoming() {
         match stream {

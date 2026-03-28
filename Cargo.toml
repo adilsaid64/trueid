@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/trueidd",
-    "crates/trueidctl",
+    "crates/trueid-daemon",
+    "crates/trueid-ctl",
     "crates/trueid-core",
-    "crates/trueid-ipc"
+    "crates/trueid-ipc",
 ]
