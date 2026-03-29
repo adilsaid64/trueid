@@ -2,7 +2,7 @@ pub mod application;
 pub mod domain;
 pub mod ports;
 
-pub use application::app::{MultiFramePolicy, TrueIdApp};
+pub use application::app::{MultiFramePolicy, TrueIdApp, TrueIdAppDeps};
 pub use ports::{
     AlignError, CaptureSpec, DetectError, FaceAligner, FaceDetector, FaceEmbedError, FaceEmbedder,
     LivenessChecker, LivenessError,

@@ -234,7 +234,7 @@ fn yuv_bt601_to_rgb(y: i32, u: i32, v: i32) -> (u8, u8, u8) {
 }
 
 fn yuyv_to_rgb(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CaptureError> {
-    if width % 2 != 0 {
+    if !width.is_multiple_of(2) {
         return Err(CaptureError::Failed(format!(
             "YUYV requires even width, got {width}"
         )));

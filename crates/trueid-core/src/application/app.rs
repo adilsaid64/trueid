@@ -28,7 +28,20 @@ impl Default for MultiFramePolicy {
 /// Minimum number of templates that must match a single probe for that frame to count toward verify.
 /// This is ceil(n/2): e.g. 1→1, 2→1, 3→2, 4→2 (at least 50% of templates).
 fn template_quorum_required(template_count: usize) -> usize {
-    (template_count + 1) / 2
+    template_count.div_ceil(2)
+}
+
+/// Wired dependencies for [`TrueIdApp`].
+pub struct TrueIdAppDeps {
+    pub health: Arc<dyn Health>,
+    pub video: Arc<dyn VideoSource>,
+    pub detector: Arc<dyn FaceDetector>,
+    pub aligner: Arc<dyn FaceAligner>,
+    pub liveness: Arc<dyn LivenessChecker>,
+    pub face_embedder: Arc<dyn FaceEmbedder>,
+    pub template_store: Arc<dyn TemplateStore>,
+    pub matcher: Arc<dyn EmbeddingMatcher>,
+    pub capture: MultiFramePolicy,
 }
 
 pub struct TrueIdApp {
@@ -44,27 +57,17 @@ pub struct TrueIdApp {
 }
 
 impl TrueIdApp {
-    pub fn new(
-        health: Arc<dyn Health>,
-        video: Arc<dyn VideoSource>,
-        detector: Arc<dyn FaceDetector>,
-        aligner: Arc<dyn FaceAligner>,
-        liveness: Arc<dyn LivenessChecker>,
-        face_embedder: Arc<dyn FaceEmbedder>,
-        template_store: Arc<dyn TemplateStore>,
-        matcher: Arc<dyn EmbeddingMatcher>,
-        capture: MultiFramePolicy,
-    ) -> Self {
+    pub fn new(deps: TrueIdAppDeps) -> Self {
         Self {
-            health,
-            video,
-            detector,
-            aligner,
-            liveness,
-            face_embedder,
-            template_store,
-            matcher,
-            capture,
+            health: deps.health,
+            video: deps.video,
+            detector: deps.detector,
+            aligner: deps.aligner,
+            liveness: deps.liveness,
+            face_embedder: deps.face_embedder,
+            template_store: deps.template_store,
+            matcher: deps.matcher,
+            capture: deps.capture,
         }
     }
 
@@ -508,17 +511,17 @@ mod tests {
 
     fn app_with_store(store: Arc<MemoryStore>, embed_out: Embedding) -> TrueIdApp {
         let template_store: Arc<dyn TemplateStore> = store;
-        TrueIdApp::new(
-            Arc::new(OkHealth),
-            Arc::new(TestFrame),
-            Arc::new(FullFrameDetector),
-            Arc::new(CloneAligner),
-            Arc::new(AlwaysLive),
-            Arc::new(ConstFaceEmbedder { out: embed_out }),
+        TrueIdApp::new(super::TrueIdAppDeps {
+            health: Arc::new(OkHealth),
+            video: Arc::new(TestFrame),
+            detector: Arc::new(FullFrameDetector),
+            aligner: Arc::new(CloneAligner),
+            liveness: Arc::new(AlwaysLive),
+            face_embedder: Arc::new(ConstFaceEmbedder { out: embed_out }),
             template_store,
-            Arc::new(ExactMatcher),
-            MultiFramePolicy::default(),
-        )
+            matcher: Arc::new(ExactMatcher),
+            capture: MultiFramePolicy::default(),
+        })
     }
 
     #[test]
@@ -540,19 +543,19 @@ mod tests {
     #[test]
     fn ping_err_when_degraded() {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
-        let app = TrueIdApp::new(
-            Arc::new(BadHealth),
-            Arc::new(TestFrame),
-            Arc::new(FullFrameDetector),
-            Arc::new(CloneAligner),
-            Arc::new(AlwaysLive),
-            Arc::new(ConstFaceEmbedder {
+        let app = TrueIdApp::new(super::TrueIdAppDeps {
+            health: Arc::new(BadHealth),
+            video: Arc::new(TestFrame),
+            detector: Arc::new(FullFrameDetector),
+            aligner: Arc::new(CloneAligner),
+            liveness: Arc::new(AlwaysLive),
+            face_embedder: Arc::new(ConstFaceEmbedder {
                 out: Embedding(vec![1.0]),
             }),
-            store,
-            Arc::new(ExactMatcher),
-            MultiFramePolicy::default(),
-        );
+            template_store: store,
+            matcher: Arc::new(ExactMatcher),
+            capture: MultiFramePolicy::default(),
+        });
         let err = app.ping().unwrap_err();
         assert!(err.to_string().contains("camera offline"));
     }
@@ -676,19 +679,19 @@ mod tests {
         }
 
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
-        let app = TrueIdApp::new(
-            Arc::new(OkHealth),
-            Arc::new(TestFrame),
-            Arc::new(NoFaceDetector),
-            Arc::new(CloneAligner),
-            Arc::new(AlwaysLive),
-            Arc::new(ConstFaceEmbedder {
+        let app = TrueIdApp::new(super::TrueIdAppDeps {
+            health: Arc::new(OkHealth),
+            video: Arc::new(TestFrame),
+            detector: Arc::new(NoFaceDetector),
+            aligner: Arc::new(CloneAligner),
+            liveness: Arc::new(AlwaysLive),
+            face_embedder: Arc::new(ConstFaceEmbedder {
                 out: Embedding(vec![1.0, 0.0]),
             }),
-            store,
-            Arc::new(ExactMatcher),
-            MultiFramePolicy::default(),
-        );
+            template_store: store,
+            matcher: Arc::new(ExactMatcher),
+            capture: MultiFramePolicy::default(),
+        });
         let err = app.enroll(&UserId(6000)).unwrap_err();
         assert!(matches!(
             err,
@@ -699,19 +702,19 @@ mod tests {
     #[test]
     fn enroll_fails_when_unhealthy() {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
-        let app = TrueIdApp::new(
-            Arc::new(BadHealth),
-            Arc::new(TestFrame),
-            Arc::new(FullFrameDetector),
-            Arc::new(CloneAligner),
-            Arc::new(AlwaysLive),
-            Arc::new(ConstFaceEmbedder {
+        let app = TrueIdApp::new(super::TrueIdAppDeps {
+            health: Arc::new(BadHealth),
+            video: Arc::new(TestFrame),
+            detector: Arc::new(FullFrameDetector),
+            aligner: Arc::new(CloneAligner),
+            liveness: Arc::new(AlwaysLive),
+            face_embedder: Arc::new(ConstFaceEmbedder {
                 out: Embedding(vec![1.0, 0.0]),
             }),
-            store,
-            Arc::new(ExactMatcher),
-            MultiFramePolicy::default(),
-        );
+            template_store: store,
+            matcher: Arc::new(ExactMatcher),
+            capture: MultiFramePolicy::default(),
+        });
         let err = app.enroll(&UserId(5000)).unwrap_err();
         assert!(err.to_string().contains("camera offline"));
     }

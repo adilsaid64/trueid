@@ -208,7 +208,7 @@ impl FaceEmbedder for OnnxFaceEmbedder {
             .map_err(|e| FaceEmbedError::Failed(format!("inference: {e}")))?;
 
         let first = outputs
-            .get(0)
+            .first()
             .ok_or_else(|| FaceEmbedError::Failed("model returned no outputs".into()))?;
 
         let view = first

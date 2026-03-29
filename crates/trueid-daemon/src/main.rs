@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use trueid_core::{Embedding, MultiFramePolicy, TrueIdApp};
+use trueid_core::{Embedding, MultiFramePolicy, TrueIdApp, TrueIdAppDeps};
 use trueid_core::ports::{FaceAligner, FaceDetector, FaceEmbedder};
 use trueid_ipc::SOCKET_PATH;
 
@@ -59,13 +59,10 @@ fn main() -> std::io::Result<()> {
         let cap_h = parse_u32_env_positive("TRUEID_CAPTURE_HEIGHT", 480);
         Arc::new(
             adapters::V4lVideoSource::open_with_dimensions(index, cap_w, cap_h).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!(
-                        "camera open failed (index {index}): {e}. \
-                         Set TRUEID_USE_MOCK_VIDEO_SOURCE=1 to run without a device."
-                    ),
-                )
+                std::io::Error::other(format!(
+                    "camera open failed (index {index}): {e}. \
+                     Set TRUEID_USE_MOCK_VIDEO_SOURCE=1 to run without a device."
+                ))
             })?,
         )
     };
@@ -76,13 +73,11 @@ fn main() -> std::io::Result<()> {
         {
             Arc::new(adapters::MockFaceEmbedder::new(Embedding(vec![1.0, 0.0, 0.0])))
         } else {
-            adapters::build_face_embedder().map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, e)
-            })?
+            adapters::build_face_embedder().map_err(std::io::Error::other)?
         };
-    let template_store = Arc::new(adapters::FileTemplateStore::open_default().map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-    })?);
+    let template_store = Arc::new(
+        adapters::FileTemplateStore::open_default().map_err(|e| std::io::Error::other(e.to_string()))?,
+    );
     let matcher = Arc::new(adapters::CosineMatcher::new(parse_match_threshold()));
 
     let detector: Arc<dyn FaceDetector> =
@@ -92,9 +87,7 @@ fn main() -> std::io::Result<()> {
         {
             Arc::new(adapters::FullFrameFaceDetector)
         } else {
-            adapters::build_face_detector().map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, e)
-            })?
+            adapters::build_face_detector().map_err(std::io::Error::other)?
         };
     let aligner: Arc<dyn FaceAligner> =
         if std::env::var("TRUEID_USE_PASSTHROUGH_ALIGNER")
@@ -107,7 +100,7 @@ fn main() -> std::io::Result<()> {
         };
     let liveness = Arc::new(adapters::AlwaysLiveLiveness);
 
-    let app = Arc::new(TrueIdApp::new(
+    let app = Arc::new(TrueIdApp::new(TrueIdAppDeps {
         health,
         video,
         detector,
@@ -116,8 +109,8 @@ fn main() -> std::io::Result<()> {
         face_embedder,
         template_store,
         matcher,
-        MultiFramePolicy::default(),
-    ));
+        capture: MultiFramePolicy::default(),
+    }));
 
     ipc::run_unix_socket(SOCKET_PATH, app)
 }

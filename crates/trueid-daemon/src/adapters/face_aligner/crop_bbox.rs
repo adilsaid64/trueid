@@ -247,8 +247,6 @@ fn crop_and_resize(
 
 /// Umeyama similarity (InsightFace `norm_crop` / scikit-image `SimilarityTransform`).
 /// Maps `src` landmark pixels → `dst` reference: `dst ≈ c * R * src + t` with orthogonal `R`.
-// ... (unchanged imports and constants remain the same)
-
 fn umeyama_similarity_2d(
     src: &[[f32; 2]; 5],
     dst: &[[f32; 2]; 5],
