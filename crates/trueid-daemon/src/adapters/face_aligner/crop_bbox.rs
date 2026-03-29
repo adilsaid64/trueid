@@ -247,10 +247,12 @@ fn crop_and_resize(
 
 /// Umeyama similarity (InsightFace `norm_crop` / scikit-image `SimilarityTransform`).
 /// Maps `src` landmark pixels → `dst` reference: `dst ≈ c * R * src + t` with orthogonal `R`.
+// ... (unchanged imports and constants remain the same)
+
 fn umeyama_similarity_2d(
     src: &[[f32; 2]; 5],
     dst: &[[f32; 2]; 5],
-) -> Result<(f32, f32, f32, f32), AlignError> {
+) -> Result<([f32; 4], [f32; 2]), AlignError> {
     let n = 5.0f64;
     let mut mu_s = [0f64; 2];
     let mut mu_d = [0f64; 2];
@@ -300,25 +302,28 @@ fn umeyama_similarity_2d(
     let t_v = mu_d_v - c * r * mu_s_v;
 
     let lin = c * r;
-    let a = lin[(0, 0)] as f32;
-    let b = lin[(1, 0)] as f32;
-    if a * a + b * b < 1e-12f32 {
-        return Err(AlignError::Failed("similarity scale too small".into()));
+
+    let m00 = lin[(0, 0)] as f32;
+    let m01 = lin[(0, 1)] as f32;
+    let m10 = lin[(1, 0)] as f32;
+    let m11 = lin[(1, 1)] as f32;
+
+    let det = m00 * m11 - m01 * m10;
+    if det.abs() < 1e-12 {
+        return Err(AlignError::Failed("similarity transform degenerate".into()));
     }
 
     tracing::trace!(
-        a,
-        b,
+        m00, m01, m10, m11,
         tx = t_v.x,
         ty = t_v.y,
         scale = c,
         "align: umeyama similarity fit"
     );
 
-    Ok((a, b, t_v.x as f32, t_v.y as f32))
+    Ok(([m00, m01, m10, m11], [t_v.x as f32, t_v.y as f32]))
 }
 
-/// Maps five subject landmarks to InsightFace reference on an `out`×`out` canvas (inverse-sampled).
 fn warp_similarity_five_point(
     rgb: &RgbImage,
     fw: u32,
@@ -337,24 +342,31 @@ fn warp_similarity_five_point(
         [lm.mouth_left.0 * fw_f, lm.mouth_left.1 * fh_f],
         [lm.mouth_right.0 * fw_f, lm.mouth_right.1 * fh_f],
     ];
+
     let mut dst = [[0f32; 2]; 5];
     for (i, r) in REF112_FIVE.iter().enumerate() {
         dst[i][0] = r.0 * s;
         dst[i][1] = r.1 * s;
     }
 
-    let (a, b, tx, ty) = umeyama_similarity_2d(&src, &dst)?;
-    let denom = a * a + b * b;
+    let (m, t) = umeyama_similarity_2d(&src, &dst)?;
+    let (m00, m01, m10, m11) = (m[0], m[1], m[2], m[3]);
+    let (tx, ty) = (t[0], t[1]);
+
+    let det = m00 * m11 - m01 * m10;
 
     let mut out_img = RgbImage::new(out, out);
     for oy in 0..out {
         for ox in 0..out {
             let dst_x = ox as f32 + 0.5;
             let dst_y = oy as f32 + 0.5;
+
             let px = dst_x - tx;
             let py = dst_y - ty;
-            let sx = (a * px + b * py) / denom;
-            let sy = (-b * px + a * py) / denom;
+
+            let sx = ( m11 * px - m01 * py) / det;
+            let sy = (-m10 * px + m00 * py) / det;
+
             let p = sample_bilinear(rgb, sx, sy, fw_f, fh_f);
             out_img.put_pixel(ox, oy, p);
         }
@@ -417,13 +429,21 @@ mod tests {
             [72.0, 92.0],
         ];
         let dst = src;
-        let (a, b, tx, ty) = umeyama_similarity_2d(&src, &dst).unwrap();
-        assert!((a - 1.0).abs() < 1e-3, "a={a}");
-        assert!(b.abs() < 1e-3, "b={b}");
+    
+        let (m, t) = umeyama_similarity_2d(&src, &dst).unwrap();
+        let (m00, m01, m10, m11) = (m[0], m[1], m[2], m[3]);
+        let (tx, ty) = (t[0], t[1]);
+    
+        // Identity matrix
+        assert!((m00 - 1.0).abs() < 1e-3, "m00={m00}");
+        assert!(m01.abs() < 1e-3, "m01={m01}");
+        assert!(m10.abs() < 1e-3, "m10={m10}");
+        assert!((m11 - 1.0).abs() < 1e-3, "m11={m11}");
+    
+        // Zero translation
         assert!(tx.abs() < 1e-2, "tx={tx}");
         assert!(ty.abs() < 1e-2, "ty={ty}");
     }
-
     #[test]
     fn umeyama_recovers_uniform_scale_and_translation() {
         let src: [[f32; 2]; 5] = [
@@ -433,18 +453,29 @@ mod tests {
             [12.0, 40.0],
             [28.0, 38.0],
         ];
+    
         let scale = 2.0_f32;
         let tx = 3.0_f32;
         let ty = -7.0_f32;
+    
         let mut dst = [[0f32; 2]; 5];
         for i in 0..5 {
             dst[i][0] = scale * src[i][0] + tx;
             dst[i][1] = scale * src[i][1] + ty;
         }
-        let (a, b, got_tx, got_ty) = umeyama_similarity_2d(&src, &dst).unwrap();
-        assert!(b.abs() < 1e-3);
-        assert!((a - scale).abs() < 1e-2);
-        assert!((got_tx - tx).abs() < 1e-2);
-        assert!((got_ty - ty).abs() < 1e-2);
+    
+        let (m, t) = umeyama_similarity_2d(&src, &dst).unwrap();
+        let (m00, m01, m10, m11) = (m[0], m[1], m[2], m[3]);
+        let (got_tx, got_ty) = (t[0], t[1]);
+    
+        // Scale matrix (no rotation)
+        assert!(m01.abs() < 1e-3, "m01={m01}");
+        assert!(m10.abs() < 1e-3, "m10={m10}");
+        assert!((m00 - scale).abs() < 1e-2, "m00={m00}");
+        assert!((m11 - scale).abs() < 1e-2, "m11={m11}");
+    
+        // Translation
+        assert!((got_tx - tx).abs() < 1e-2, "tx={got_tx}");
+        assert!((got_ty - ty).abs() < 1e-2, "ty={got_ty}");
     }
 }
