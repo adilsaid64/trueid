@@ -1,4 +1,4 @@
-//! Landmark-based similarity warp (YuNet) or square bbox crop + resize to `output_size`.
+//! Five-point landmark similarity warp to InsightFace 112 reference (YuNet) or square bbox crop.
 //! Optional `TRUEID_DEBUG_ALIGNED_DIR`: write each aligned face as PNG for debugging.
 
 use std::path::{Path, PathBuf};
@@ -8,15 +8,21 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use image::imageops::FilterType;
 use image::{DynamicImage, Rgb, RgbImage};
+use nalgebra::{Matrix2, SVD};
 use trueid_core::ports::{AlignError, FaceAligner};
 use trueid_core::{BoundingBox, FaceDetection, FaceLandmarks, Frame, PixelFormat};
 
 /// Default aligned face size (InsightFace / ArcFace-style models often use 112×112).
 const DEFAULT_OUTPUT: u32 = 112;
 
-/// Reference eye positions on a 112×112 canvas (InsightFace `norm_crop` template).
-const REF112_LE: (f32, f32) = (38.2946, 51.6963);
-const REF112_RE: (f32, f32) = (73.5318, 51.5014);
+/// ArcFace / InsightFace 112×112 canonical template (same order as [`FaceLandmarks`]).
+const REF112_FIVE: [(f32, f32); 5] = [
+    (38.2946, 51.6963),   // left eye
+    (73.5318, 51.5014),   // right eye
+    (56.0252, 71.7366),   // nose
+    (41.5493, 92.3655),   // mouth left
+    (70.7299, 92.2041),   // mouth right
+];
 
 /// Expand bbox by this fraction of width/height before squaring (e.g. 0.25 → +25% size).
 const DEFAULT_MARGIN: f32 = 0.25;
@@ -112,8 +118,11 @@ impl FaceAligner for CropFaceAligner {
         let out = self.output_size;
 
         let cropped = if let Some(ref lm) = detection.landmarks {
-            warp_similarity_eyes(&rgb, frame.width, frame.height, lm, out)?
+            warp_similarity_five_point(&rgb, frame.width, frame.height, lm, out)?
         } else {
+            tracing::warn!(
+                "align: no landmarks; using square bbox crop (poor match for ArcFace-style embedders)"
+            );
             let bb = square_crop_bbox(&detection.bbox, self.margin);
             tracing::trace!(?bb, "align: bbox-only crop (no landmarks)");
             crop_and_resize(&rgb, frame.width, frame.height, &bb, out)?
@@ -121,7 +130,7 @@ impl FaceAligner for CropFaceAligner {
 
         tracing::debug!(
             mode = if has_landmarks {
-                "similarity_eyes"
+                "similarity_five_point"
             } else {
                 "bbox_square"
             },
@@ -236,8 +245,81 @@ fn crop_and_resize(
     Ok(resized.to_rgb8())
 }
 
-/// Maps subject left/right eye centers to InsightFace reference positions on an `out`×`out` canvas.
-fn warp_similarity_eyes(
+/// Umeyama similarity (InsightFace `norm_crop` / scikit-image `SimilarityTransform`).
+/// Maps `src` landmark pixels → `dst` reference: `dst ≈ c * R * src + t` with orthogonal `R`.
+fn umeyama_similarity_2d(
+    src: &[[f32; 2]; 5],
+    dst: &[[f32; 2]; 5],
+) -> Result<(f32, f32, f32, f32), AlignError> {
+    let n = 5.0f64;
+    let mut mu_s = [0f64; 2];
+    let mut mu_d = [0f64; 2];
+    for i in 0..5 {
+        mu_s[0] += src[i][0] as f64;
+        mu_s[1] += src[i][1] as f64;
+        mu_d[0] += dst[i][0] as f64;
+        mu_d[1] += dst[i][1] as f64;
+    }
+    mu_s[0] /= n;
+    mu_s[1] /= n;
+    mu_d[0] /= n;
+    mu_d[1] /= n;
+
+    let mut h = Matrix2::zeros();
+    let mut var_s = 0.0f64;
+    for i in 0..5 {
+        let scx = src[i][0] as f64 - mu_s[0];
+        let scy = src[i][1] as f64 - mu_s[1];
+        let dcx = dst[i][0] as f64 - mu_d[0];
+        let dcy = dst[i][1] as f64 - mu_d[1];
+        var_s += scx * scx + scy * scy;
+        h += Matrix2::new(scx * dcx, scx * dcy, scy * dcx, scy * dcy);
+    }
+
+    if var_s < 1e-18 {
+        return Err(AlignError::Failed("degenerate source landmarks".into()));
+    }
+
+    let svd = SVD::new(h, true, true);
+    let u = svd.u.ok_or_else(|| AlignError::Failed("SVD(U) failed".into()))?;
+    let mut v_t = svd.v_t.ok_or_else(|| AlignError::Failed("SVD(Vt) failed".into()))?;
+    let sig = svd.singular_values;
+
+    let mut r = v_t.transpose() * u.transpose();
+    if r.determinant() < 0.0 {
+        let last = v_t.nrows() - 1;
+        for j in 0..v_t.ncols() {
+            v_t[(last, j)] = -v_t[(last, j)];
+        }
+        r = v_t.transpose() * u.transpose();
+    }
+
+    let c = (sig[0] + sig[1]) / var_s;
+    let mu_s_v = nalgebra::Vector2::new(mu_s[0], mu_s[1]);
+    let mu_d_v = nalgebra::Vector2::new(mu_d[0], mu_d[1]);
+    let t_v = mu_d_v - c * r * mu_s_v;
+
+    let lin = c * r;
+    let a = lin[(0, 0)] as f32;
+    let b = lin[(1, 0)] as f32;
+    if a * a + b * b < 1e-12f32 {
+        return Err(AlignError::Failed("similarity scale too small".into()));
+    }
+
+    tracing::trace!(
+        a,
+        b,
+        tx = t_v.x,
+        ty = t_v.y,
+        scale = c,
+        "align: umeyama similarity fit"
+    );
+
+    Ok((a, b, t_v.x as f32, t_v.y as f32))
+}
+
+/// Maps five subject landmarks to InsightFace reference on an `out`×`out` canvas (inverse-sampled).
+fn warp_similarity_five_point(
     rgb: &RgbImage,
     fw: u32,
     fh: u32,
@@ -245,49 +327,35 @@ fn warp_similarity_eyes(
     out: u32,
 ) -> Result<RgbImage, AlignError> {
     let s = out as f32 / 112.0;
-    let q1x = REF112_LE.0 * s;
-    let q1y = REF112_LE.1 * s;
-    let q2x = REF112_RE.0 * s;
-    let q2y = REF112_RE.1 * s;
+    let fw_f = fw as f32;
+    let fh_f = fh as f32;
 
-    let p1x = lm.left_eye.0 * fw as f32;
-    let p1y = lm.left_eye.1 * fh as f32;
-    let p2x = lm.right_eye.0 * fw as f32;
-    let p2y = lm.right_eye.1 * fh as f32;
-
-    let dx = p2x - p1x;
-    let dy = p2y - p1y;
-    let den = dx * dx + dy * dy;
-    if den < 1e-6 {
-        return Err(AlignError::Failed(
-            "landmark eyes degenerate; cannot align".into(),
-        ));
+    let src: [[f32; 2]; 5] = [
+        [lm.left_eye.0 * fw_f, lm.left_eye.1 * fh_f],
+        [lm.right_eye.0 * fw_f, lm.right_eye.1 * fh_f],
+        [lm.nose_tip.0 * fw_f, lm.nose_tip.1 * fh_f],
+        [lm.mouth_left.0 * fw_f, lm.mouth_left.1 * fh_f],
+        [lm.mouth_right.0 * fw_f, lm.mouth_right.1 * fh_f],
+    ];
+    let mut dst = [[0f32; 2]; 5];
+    for (i, r) in REF112_FIVE.iter().enumerate() {
+        dst[i][0] = r.0 * s;
+        dst[i][1] = r.1 * s;
     }
 
-    let dqx = q2x - q1x;
-    let dqy = q2y - q1y;
-    let sc = (dqx * dx + dqy * dy) / den;
-    let ss = (dqy * dx - dqx * dy) / den;
-    let tx = q1x - sc * p1x + ss * p1y;
-    let ty = q1y - ss * p1x - sc * p1y;
-
-    let inv_det = sc * sc + ss * ss;
-    if inv_det < 1e-12 {
-        return Err(AlignError::Failed("similarity scale too small".into()));
-    }
+    let (a, b, tx, ty) = umeyama_similarity_2d(&src, &dst)?;
+    let denom = a * a + b * b;
 
     let mut out_img = RgbImage::new(out, out);
-    let fw1 = fw as f32;
-    let fh1 = fh as f32;
-
     for oy in 0..out {
         for ox in 0..out {
             let dst_x = ox as f32 + 0.5;
             let dst_y = oy as f32 + 0.5;
-            let sx = (sc * (dst_x - tx) + ss * (dst_y - ty)) / inv_det;
-            let sy = (-ss * (dst_x - tx) + sc * (dst_y - ty)) / inv_det;
-
-            let p = sample_bilinear(rgb, sx, sy, fw1, fh1);
+            let px = dst_x - tx;
+            let py = dst_y - ty;
+            let sx = (a * px + b * py) / denom;
+            let sy = (-b * px + a * py) / denom;
+            let p = sample_bilinear(rgb, sx, sy, fw_f, fh_f);
             out_img.put_pixel(ox, oy, p);
         }
     }
@@ -337,5 +405,46 @@ mod tests {
         let s = square_crop_bbox(&b, 0.25);
         assert!((s.w - 1.0).abs() < 1e-5);
         assert!((s.x).abs() < 1e-5);
+    }
+
+    #[test]
+    fn umeyama_recovers_identity() {
+        let src: [[f32; 2]; 5] = [
+            [10.0, 20.0],
+            [80.0, 25.0],
+            [45.0, 60.0],
+            [30.0, 95.0],
+            [72.0, 92.0],
+        ];
+        let dst = src;
+        let (a, b, tx, ty) = umeyama_similarity_2d(&src, &dst).unwrap();
+        assert!((a - 1.0).abs() < 1e-3, "a={a}");
+        assert!(b.abs() < 1e-3, "b={b}");
+        assert!(tx.abs() < 1e-2, "tx={tx}");
+        assert!(ty.abs() < 1e-2, "ty={ty}");
+    }
+
+    #[test]
+    fn umeyama_recovers_uniform_scale_and_translation() {
+        let src: [[f32; 2]; 5] = [
+            [10.0, 5.0],
+            [30.0, 8.0],
+            [20.0, 18.0],
+            [12.0, 40.0],
+            [28.0, 38.0],
+        ];
+        let scale = 2.0_f32;
+        let tx = 3.0_f32;
+        let ty = -7.0_f32;
+        let mut dst = [[0f32; 2]; 5];
+        for i in 0..5 {
+            dst[i][0] = scale * src[i][0] + tx;
+            dst[i][1] = scale * src[i][1] + ty;
+        }
+        let (a, b, got_tx, got_ty) = umeyama_similarity_2d(&src, &dst).unwrap();
+        assert!(b.abs() < 1e-3);
+        assert!((a - scale).abs() < 1e-2);
+        assert!((got_tx - tx).abs() < 1e-2);
+        assert!((got_ty - ty).abs() < 1e-2);
     }
 }

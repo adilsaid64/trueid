@@ -10,6 +10,7 @@ serde_json = "1.0.149"
 v4l = "0.14"
 trueid-core = { path = "../trueid-core" }
 trueid-ipc = { path = "../trueid-ipc" }
+nalgebra = { version = "0.33", default-features = false, features = ["std"] }
 tract-onnx = "0.21.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

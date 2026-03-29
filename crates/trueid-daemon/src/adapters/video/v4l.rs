@@ -1,7 +1,9 @@
 //! V4L2 camera → RGB8 [`Frame`]s.
 //!
 //! Opens `/dev/video{N}` only during each capture burst, decodes MJPEG (EXIF orientation) or raw
-//! YUYV/grey, then optional `TRUEID_V4L_ROTATE_180` / `TRUEID_V4L_FLIP_VERTICAL` when EXIF is absent.
+//! YUYV/grey, then optional `TRUEID_V4L_ROTATE_180` / `TRUEID_V4L_FLIP_VERTICAL`.
+//! For MJPEG, env-based fixes run only when EXIF orientation is `NoTransforms`; otherwise they
+//! would stack on top of EXIF and invert the image (e.g. upside-down aligned faces).
 
 use std::io;
 use std::io::Cursor;
@@ -94,21 +96,21 @@ fn decode_payload(
     width: u32,
     height: u32,
 ) -> Result<(Vec<u8>, u32, u32), CaptureError> {
-    let (bytes, w, h) = if matches_fourcc(fourcc, b"MJPG") {
+    let (bytes, w, h, skip_env_sensor_fix) = if matches_fourcc(fourcc, b"MJPG") {
         decode_mjpeg_apply_exif(payload)?
     } else if matches_fourcc(fourcc, b"YUYV") {
         let bytes = yuyv_to_rgb(payload, width, height)?;
-        (bytes, width, height)
+        (bytes, width, height, false)
     } else if matches_fourcc(fourcc, b"GREY") || matches_fourcc(fourcc, b"Y800") {
         let bytes = grey8_to_rgb(payload, width, height)?;
-        (bytes, width, height)
+        (bytes, width, height, false)
     } else {
         return Err(CaptureError::Failed(format!(
             "unsupported fourcc {:?} (want MJPG, YUYV, GREY, or Y800)",
             fourcc.str().unwrap_or("?")
         )));
     };
-    apply_optional_sensor_fix(bytes, w, h)
+    apply_optional_sensor_fix(bytes, w, h, skip_env_sensor_fix)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,9 +147,18 @@ fn apply_optional_sensor_fix(
     rgb: Vec<u8>,
     width: u32,
     height: u32,
+    skip_env_sensor_fix: bool,
 ) -> Result<(Vec<u8>, u32, u32), CaptureError> {
     let fix = pixel_fix_from_env();
     if fix == V4lPixelFix::None {
+        return Ok((rgb, width, height));
+    }
+    if skip_env_sensor_fix {
+        tracing::info!(
+            ?fix,
+            "v4l: skipping env sensor fix (MJPEG already oriented via EXIF; \
+             TRUEID_V4L_ROTATE_180 would flip it again)"
+        );
         return Ok((rgb, width, height));
     }
     let img = RgbImage::from_raw(width, height, rgb).ok_or_else(|| {
@@ -163,7 +174,10 @@ fn apply_optional_sensor_fix(
     Ok((out.into_raw(), w, h))
 }
 
-fn decode_mjpeg_apply_exif(payload: &[u8]) -> Result<(Vec<u8>, u32, u32), CaptureError> {
+/// Returns `(rgb, w, h, skip_env_sensor_fix)`.
+/// `skip_env_sensor_fix` is true when EXIF requested a non-identity orientation so we do not also
+/// apply `TRUEID_V4L_ROTATE_180` / `TRUEID_V4L_FLIP_VERTICAL` (avoids double correction).
+fn decode_mjpeg_apply_exif(payload: &[u8]) -> Result<(Vec<u8>, u32, u32, bool), CaptureError> {
     let mut decoder = ImageReader::with_format(Cursor::new(payload), ImageFormat::Jpeg)
         .into_decoder()
         .map_err(|e| CaptureError::Failed(format!("mjpeg decoder: {e}")))?;
@@ -179,7 +193,8 @@ fn decode_mjpeg_apply_exif(payload: &[u8]) -> Result<(Vec<u8>, u32, u32), Captur
     let rgb = img.to_rgb8();
     let w = rgb.width();
     let h = rgb.height();
-    Ok((rgb.into_raw(), w, h))
+    let skip_env_sensor_fix = orientation != Orientation::NoTransforms;
+    Ok((rgb.into_raw(), w, h, skip_env_sensor_fix))
 }
 
 fn grey8_to_rgb(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CaptureError> {
