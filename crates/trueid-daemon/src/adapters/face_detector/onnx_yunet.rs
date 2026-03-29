@@ -7,12 +7,10 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use image::{imageops::FilterType, DynamicImage, Rgb, RgbImage};
+use image::{DynamicImage, Rgb, RgbImage, imageops::FilterType};
 use tract_onnx::prelude::*;
 use trueid_core::ports::{DetectError, FaceDetector};
-use trueid_core::{
-    BoundingBox, FaceDetection, FaceLandmarks, Frame, PixelFormat,
-};
+use trueid_core::{BoundingBox, FaceDetection, FaceLandmarks, Frame, PixelFormat};
 
 const DIVISOR: u32 = 32;
 const INPUT_W: u32 = 640;
@@ -164,10 +162,7 @@ impl OnnxYuNetDetector {
         }
 
         let kept = nms(&candidates, nms_threshold, top_k);
-        Ok(kept
-            .into_iter()
-            .map(|i| candidates[i].clone())
-            .collect())
+        Ok(kept.into_iter().map(|i| candidates[i].clone()).collect())
     }
 }
 
@@ -259,9 +254,8 @@ fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, DetectError> {
                     frame.height
                 )));
             }
-            RgbImage::from_raw(frame.width, frame.height, frame.bytes.clone()).ok_or_else(|| {
-                DetectError::Failed("invalid rgb8 buffer".into())
-            })
+            RgbImage::from_raw(frame.width, frame.height, frame.bytes.clone())
+                .ok_or_else(|| DetectError::Failed("invalid rgb8 buffer".into()))
         }
         PixelFormat::Gray8 => {
             if frame.bytes.len() != w * h {
@@ -386,9 +380,7 @@ pub fn default_detector_path() -> Option<std::path::PathBuf> {
         .or_else(|| {
             std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
         })?;
-    Some(
-        base.join("trueid/models/face_detection_yunet_2023mar.onnx"),
-    )
+    Some(base.join("trueid/models/face_detection_yunet_2023mar.onnx"))
 }
 
 pub fn build_face_detector() -> Result<std::sync::Arc<dyn FaceDetector>, String> {

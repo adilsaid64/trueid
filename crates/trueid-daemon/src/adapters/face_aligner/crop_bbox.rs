@@ -2,8 +2,8 @@
 //! Optional `TRUEID_DEBUG_ALIGNED_DIR`: write each aligned face as PNG for debugging.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use image::imageops::FilterType;
@@ -17,11 +17,11 @@ const DEFAULT_OUTPUT: u32 = 112;
 
 /// ArcFace / InsightFace 112×112 canonical template (same order as [`FaceLandmarks`]).
 const REF112_FIVE: [(f32, f32); 5] = [
-    (38.2946, 51.6963),   // left eye
-    (73.5318, 51.5014),   // right eye
-    (56.0252, 71.7366),   // nose
-    (41.5493, 92.3655),   // mouth left
-    (70.7299, 92.2041),   // mouth right
+    (38.2946, 51.6963), // left eye
+    (73.5318, 51.5014), // right eye
+    (56.0252, 71.7366), // nose
+    (41.5493, 92.3655), // mouth left
+    (70.7299, 92.2041), // mouth right
 ];
 
 /// Expand bbox by this fraction of width/height before squaring (e.g. 0.25 → +25% size).
@@ -74,7 +74,9 @@ fn maybe_dump_aligned_face(aligned: &Frame) {
         aligned.height,
         image::ColorType::Rgb8,
     ) {
-        Ok(()) => tracing::info!(path = %file.display(), w = aligned.width, h = aligned.height, "aligned face dumped"),
+        Ok(()) => {
+            tracing::info!(path = %file.display(), w = aligned.width, h = aligned.height, "aligned face dumped")
+        }
         Err(e) => tracing::warn!(error = %e, path = %file.display(), "aligned dump: save failed"),
     }
 }
@@ -281,8 +283,12 @@ fn umeyama_similarity_2d(
     }
 
     let svd = SVD::new(h, true, true);
-    let u = svd.u.ok_or_else(|| AlignError::Failed("SVD(U) failed".into()))?;
-    let mut v_t = svd.v_t.ok_or_else(|| AlignError::Failed("SVD(Vt) failed".into()))?;
+    let u = svd
+        .u
+        .ok_or_else(|| AlignError::Failed("SVD(U) failed".into()))?;
+    let mut v_t = svd
+        .v_t
+        .ok_or_else(|| AlignError::Failed("SVD(Vt) failed".into()))?;
     let sig = svd.singular_values;
 
     let mut r = v_t.transpose() * u.transpose();
@@ -312,7 +318,10 @@ fn umeyama_similarity_2d(
     }
 
     tracing::trace!(
-        m00, m01, m10, m11,
+        m00,
+        m01,
+        m10,
+        m11,
         tx = t_v.x,
         ty = t_v.y,
         scale = c,
@@ -362,7 +371,7 @@ fn warp_similarity_five_point(
             let px = dst_x - tx;
             let py = dst_y - ty;
 
-            let sx = ( m11 * px - m01 * py) / det;
+            let sx = (m11 * px - m01 * py) / det;
             let sy = (-m10 * px + m00 * py) / det;
 
             let p = sample_bilinear(rgb, sx, sy, fw_f, fh_f);
@@ -427,17 +436,17 @@ mod tests {
             [72.0, 92.0],
         ];
         let dst = src;
-    
+
         let (m, t) = umeyama_similarity_2d(&src, &dst).unwrap();
         let (m00, m01, m10, m11) = (m[0], m[1], m[2], m[3]);
         let (tx, ty) = (t[0], t[1]);
-    
+
         // Identity matrix
         assert!((m00 - 1.0).abs() < 1e-3, "m00={m00}");
         assert!(m01.abs() < 1e-3, "m01={m01}");
         assert!(m10.abs() < 1e-3, "m10={m10}");
         assert!((m11 - 1.0).abs() < 1e-3, "m11={m11}");
-    
+
         // Zero translation
         assert!(tx.abs() < 1e-2, "tx={tx}");
         assert!(ty.abs() < 1e-2, "ty={ty}");
@@ -451,27 +460,27 @@ mod tests {
             [12.0, 40.0],
             [28.0, 38.0],
         ];
-    
+
         let scale = 2.0_f32;
         let tx = 3.0_f32;
         let ty = -7.0_f32;
-    
+
         let mut dst = [[0f32; 2]; 5];
         for i in 0..5 {
             dst[i][0] = scale * src[i][0] + tx;
             dst[i][1] = scale * src[i][1] + ty;
         }
-    
+
         let (m, t) = umeyama_similarity_2d(&src, &dst).unwrap();
         let (m00, m01, m10, m11) = (m[0], m[1], m[2], m[3]);
         let (got_tx, got_ty) = (t[0], t[1]);
-    
+
         // Scale matrix (no rotation)
         assert!(m01.abs() < 1e-3, "m01={m01}");
         assert!(m10.abs() < 1e-3, "m10={m10}");
         assert!((m00 - scale).abs() < 1e-2, "m00={m00}");
         assert!((m11 - scale).abs() < 1e-2, "m11={m11}");
-    
+
         // Translation
         assert!((got_tx - tx).abs() < 1e-2, "tx={got_tx}");
         assert!((got_ty - ty).abs() < 1e-2, "ty={got_ty}");

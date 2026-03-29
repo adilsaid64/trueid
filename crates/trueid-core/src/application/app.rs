@@ -281,7 +281,11 @@ impl TrueIdApp {
         let mut embeddings = Vec::with_capacity(frames.len());
         for (i, frame) in frames.iter().enumerate() {
             if let Some(e) = self.try_embed_from_frame(frame)? {
-                tracing::debug!(frame_index = i, dim = e.0.len(), "enroll: frame contributed embedding");
+                tracing::debug!(
+                    frame_index = i,
+                    dim = e.0.len(),
+                    "enroll: frame contributed embedding"
+                );
                 embeddings.push(e);
             } else {
                 tracing::debug!(frame_index = i, "enroll: frame skipped");
@@ -291,15 +295,15 @@ impl TrueIdApp {
             tracing::warn!("enroll: no usable embeddings from any frame");
             return Err(crate::domain::error::DomainError::NoUsableFaceInCapture.into());
         }
-        let template = crate::domain::Embedding::try_average(&embeddings).ok_or(
-            crate::domain::error::DomainError::EmbeddingAggregationFailed,
-        )?;
+        let template = crate::domain::Embedding::try_average(&embeddings)
+            .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
         tracing::info!(
             from_frames = embeddings.len(),
             template_dim = template.0.len(),
             "enroll: template averaged"
         );
-        self.template_store.save_all(user, std::slice::from_ref(&template))?;
+        self.template_store
+            .save_all(user, std::slice::from_ref(&template))?;
         tracing::info!("enroll: stored ok");
         Ok(())
     }
@@ -357,9 +361,8 @@ impl TrueIdApp {
             tracing::warn!("add_template: no usable embeddings from any frame");
             return Err(crate::domain::error::DomainError::NoUsableFaceInCapture.into());
         }
-        let new_template = crate::domain::Embedding::try_average(&embeddings).ok_or(
-            crate::domain::error::DomainError::EmbeddingAggregationFailed,
-        )?;
+        let new_template = crate::domain::Embedding::try_average(&embeddings)
+            .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
         tracing::info!(
             from_frames = embeddings.len(),
             template_dim = new_template.0.len(),
@@ -381,10 +384,9 @@ mod tests {
         BoundingBox, Embedding, FaceDetection, Frame, PixelFormat, StreamModality,
     };
     use crate::ports::{
-        AlignError, CaptureError, CaptureSpec, DetectError, EmbeddingMatcher, FaceEmbedError,
-        FaceEmbedder,
-        FaceAligner, FaceDetector, Health, HealthStatus, LivenessChecker, LivenessError, StoreError,
-        TemplateStore, VideoSource,
+        AlignError, CaptureError, CaptureSpec, DetectError, EmbeddingMatcher, FaceAligner,
+        FaceDetector, FaceEmbedError, FaceEmbedder, Health, HealthStatus, LivenessChecker,
+        LivenessError, StoreError, TemplateStore, VideoSource,
     };
 
     struct OkHealth;
@@ -490,10 +492,7 @@ mod tests {
         }
 
         fn save_all(&self, user: &UserId, templates: &[Embedding]) -> Result<(), StoreError> {
-            self.inner
-                .lock()
-                .unwrap()
-                .insert(*user, templates.to_vec());
+            self.inner.lock().unwrap().insert(*user, templates.to_vec());
             Ok(())
         }
     }

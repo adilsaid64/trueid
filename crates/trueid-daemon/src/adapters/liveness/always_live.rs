@@ -1,5 +1,5 @@
-use trueid_core::ports::{LivenessChecker, LivenessError};
 use trueid_core::Frame;
+use trueid_core::ports::{LivenessChecker, LivenessError};
 
 /// Always passes liveness.
 pub struct AlwaysLiveLiveness;

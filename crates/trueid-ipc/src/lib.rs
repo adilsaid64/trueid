@@ -8,26 +8,26 @@ pub const SOCKET_PATH: &str = "/tmp/trueid.sock";
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
     Ping,
-    Verify { uid: u32 },
-    Enroll { uid: u32 },
+    Verify {
+        uid: u32,
+    },
+    Enroll {
+        uid: u32,
+    },
     /// Append a new face template from a capture (user must already be enrolled).
-    AddTemplate { uid: u32 },
+    AddTemplate {
+        uid: u32,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Response {
-    Pong {
-        ipc_version: u32,
-    },
-    VerifyResult {
-        accepted: bool,
-    },
+    Pong { ipc_version: u32 },
+    VerifyResult { accepted: bool },
     EnrollOk,
     AddTemplateOk,
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 pub fn send_request(request: Request) -> std::io::Result<Response> {

@@ -27,10 +27,7 @@ impl FileTemplateStore {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let root = root.into();
         fs::create_dir_all(&root).map_err(|e| {
-            StoreError::Failed(format!(
-                "create template dir {}: {e}",
-                root.display()
-            ))
+            StoreError::Failed(format!("create template dir {}: {e}", root.display()))
         })?;
         Ok(Self {
             root,
@@ -49,9 +46,7 @@ fn template_dir() -> Result<PathBuf, StoreError> {
     }
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))
-        })
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
         .ok_or_else(|| StoreError::Failed("HOME unset (or set TRUEID_TEMPLATE_DIR)".into()))?;
     Ok(base.join("trueid/templates"))
 }
@@ -82,7 +77,10 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), StoreError> {
 
 impl TemplateStore for FileTemplateStore {
     fn load_all(&self, user: &UserId) -> Result<Option<Vec<Embedding>>, StoreError> {
-        let _g = self.lock.lock().map_err(|_| StoreError::Failed("lock poisoned".into()))?;
+        let _g = self
+            .lock
+            .lock()
+            .map_err(|_| StoreError::Failed("lock poisoned".into()))?;
         let path = self.path_for(user);
         if !path.is_file() {
             return Ok(None);
@@ -98,12 +96,16 @@ impl TemplateStore for FileTemplateStore {
     }
 
     fn save_all(&self, user: &UserId, templates: &[Embedding]) -> Result<(), StoreError> {
-        let _g = self.lock.lock().map_err(|_| StoreError::Failed("lock poisoned".into()))?;
+        let _g = self
+            .lock
+            .lock()
+            .map_err(|_| StoreError::Failed("lock poisoned".into()))?;
         let path = self.path_for(user);
         let body = TemplateFile {
             templates: templates.iter().map(|e| e.0.clone()).collect(),
         };
-        let json = serde_json::to_vec_pretty(&body).map_err(|e| StoreError::Failed(e.to_string()))?;
+        let json =
+            serde_json::to_vec_pretty(&body).map_err(|e| StoreError::Failed(e.to_string()))?;
         write_atomic(&path, &json)
     }
 }

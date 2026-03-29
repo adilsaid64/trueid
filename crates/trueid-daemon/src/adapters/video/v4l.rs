@@ -13,13 +13,13 @@ use std::time::Instant;
 use image::imageops;
 use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage};
+use trueid_core::ports::{CaptureError, CaptureSpec, VideoSource};
+use trueid_core::{Frame, PixelFormat, StreamModality};
 use v4l::buffer::Type;
 use v4l::io::traits::{CaptureStream, Stream as V4lStream};
 use v4l::io::userptr::Stream as UserptrStream;
 use v4l::video::Capture;
 use v4l::{Device, Format, FourCC};
-use trueid_core::ports::{CaptureError, CaptureSpec, VideoSource};
-use trueid_core::{Frame, PixelFormat, StreamModality};
 
 pub struct V4lVideoSource {
     index: u32,
@@ -36,11 +36,7 @@ impl V4lVideoSource {
     ///
     /// Opens the device briefly to validate it, then closes it so nothing holds the camera until
     /// the next [`VideoSource::capture`].
-    pub fn open_with_dimensions(
-        index: u32,
-        width: u32,
-        height: u32,
-    ) -> Result<Self, CaptureError> {
+    pub fn open_with_dimensions(index: u32, width: u32, height: u32) -> Result<Self, CaptureError> {
         let dev = Device::new(index as usize).map_err(io_to_capture)?;
         let _active = negotiate_format(&dev, width, height)?;
         let _stream =
@@ -161,9 +157,8 @@ fn apply_optional_sensor_fix(
         );
         return Ok((rgb, width, height));
     }
-    let img = RgbImage::from_raw(width, height, rgb).ok_or_else(|| {
-        CaptureError::Failed("sensor fix: invalid rgb dimensions".into())
-    })?;
+    let img = RgbImage::from_raw(width, height, rgb)
+        .ok_or_else(|| CaptureError::Failed("sensor fix: invalid rgb dimensions".into()))?;
     let out = if fix == V4lPixelFix::Rotate180 {
         imageops::rotate180(&img)
     } else {
@@ -200,9 +195,9 @@ fn decode_mjpeg_apply_exif(payload: &[u8]) -> Result<(Vec<u8>, u32, u32, bool), 
 fn grey8_to_rgb(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CaptureError> {
     let w = width as usize;
     let h = height as usize;
-    let expected = w.checked_mul(h).ok_or_else(|| {
-        CaptureError::Failed("grey frame dimensions overflow".into())
-    })?;
+    let expected = w
+        .checked_mul(h)
+        .ok_or_else(|| CaptureError::Failed("grey frame dimensions overflow".into()))?;
     if data.len() < expected {
         return Err(CaptureError::Failed(format!(
             "grey buffer too short: {} < {expected}",

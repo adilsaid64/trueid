@@ -1,5 +1,5 @@
-use trueid_core::ports::EmbeddingMatcher;
 use trueid_core::Embedding;
+use trueid_core::ports::EmbeddingMatcher;
 
 pub struct CosineMatcher {
     threshold: f32,

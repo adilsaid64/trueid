@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use image::{imageops::FilterType, DynamicImage, Rgb, RgbImage};
+use image::{DynamicImage, Rgb, RgbImage, imageops::FilterType};
 use tract_onnx::prelude::*;
 use trueid_core::ports::{FaceEmbedError, FaceEmbedder};
 use trueid_core::{Embedding, Frame, PixelFormat};
@@ -28,18 +28,15 @@ impl OnnxFaceEmbedder {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, FaceEmbedError> {
         let path = path.as_ref();
         let model = tract_onnx::onnx()
-        .model_for_path(path)
-        .map_err(|e| FaceEmbedError::Failed(format!("load onnx {path:?}: {e}")))?
-        .with_input_fact(
-            0,
-            InferenceFact::dt_shape(
-                f32::datum_type(),
-                tvec!(1, 3, 112, 112),
-            ),
-        )
-        .map_err(|e| FaceEmbedError::Failed(format!("set input fact: {e}")))?
-        .into_optimized()
-        .map_err(|e| FaceEmbedError::Failed(format!("optimize onnx {path:?}: {e}")))?;
+            .model_for_path(path)
+            .map_err(|e| FaceEmbedError::Failed(format!("load onnx {path:?}: {e}")))?
+            .with_input_fact(
+                0,
+                InferenceFact::dt_shape(f32::datum_type(), tvec!(1, 3, 112, 112)),
+            )
+            .map_err(|e| FaceEmbedError::Failed(format!("set input fact: {e}")))?
+            .into_optimized()
+            .map_err(|e| FaceEmbedError::Failed(format!("optimize onnx {path:?}: {e}")))?;
 
         let fact = model
             .input_fact(0)
@@ -51,15 +48,12 @@ impl OnnxFaceEmbedder {
             )));
         }
 
-        let shape = fact
-            .shape
-            .as_concrete()
-            .ok_or_else(|| {
-                FaceEmbedError::Failed(
-                    "model input shape must be fully known (fix batch or export a fixed-shape ONNX)"
-                        .into(),
-                )
-            })?;
+        let shape = fact.shape.as_concrete().ok_or_else(|| {
+            FaceEmbedError::Failed(
+                "model input shape must be fully known (fix batch or export a fixed-shape ONNX)"
+                    .into(),
+            )
+        })?;
 
         let (layout, input_h, input_w) = interpret_input_shape(shape)?;
 
@@ -97,7 +91,11 @@ fn interpret_input_shape(shape: &[usize]) -> Result<(InputLayout, usize, usize),
 
 /// `(rgb - 127.5) / 128.0` on 8-bit channels.
 fn normalize_arcface_rgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    ((r - 127.5) / 128.0, (g - 127.5) / 128.0, (b - 127.5) / 128.0)
+    (
+        (r - 127.5) / 128.0,
+        (g - 127.5) / 128.0,
+        (b - 127.5) / 128.0,
+    )
 }
 
 fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, FaceEmbedError> {
@@ -117,9 +115,8 @@ fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, FaceEmbedError> {
                     frame.height
                 )));
             }
-            RgbImage::from_raw(frame.width, frame.height, frame.bytes.clone()).ok_or_else(|| {
-                FaceEmbedError::Failed("invalid rgb8 buffer".into())
-            })
+            RgbImage::from_raw(frame.width, frame.height, frame.bytes.clone())
+                .ok_or_else(|| FaceEmbedError::Failed("invalid rgb8 buffer".into()))
         }
         PixelFormat::Gray8 => {
             if frame.bytes.len() != w * h {
@@ -243,5 +240,7 @@ pub fn build_face_embedder() -> Result<Arc<dyn FaceEmbedder>, String> {
             path.display()
         ));
     }
-    Ok(Arc::new(OnnxFaceEmbedder::from_file(&path).map_err(|e| e.to_string())?))
+    Ok(Arc::new(
+        OnnxFaceEmbedder::from_file(&path).map_err(|e| e.to_string())?,
+    ))
 }
