@@ -25,6 +25,12 @@ impl Default for MultiFramePolicy {
     }
 }
 
+/// Minimum number of templates that must match a single probe for that frame to count toward verify.
+/// This is ceil(n/2): e.g. 1→1, 2→1, 3→2, 4→2 (at least 50% of templates).
+fn template_quorum_required(template_count: usize) -> usize {
+    (template_count + 1) / 2
+}
+
 pub struct TrueIdApp {
     health: Arc<dyn Health>,
     video: Arc<dyn VideoSource>,
@@ -148,14 +154,20 @@ impl TrueIdApp {
             "verify: frames from camera"
         );
 
-        let Some(enrolled) = self.template_store.load(user)? else {
+        let Some(templates) = self.template_store.load_all(user)? else {
             return Err(crate::domain::error::DomainError::NoEnrolledTemplate.into());
         };
-        let enrolled_summary = enrolled.summary();
-        tracing::debug!(
-            template_dim = enrolled.0.len(),
-            ?enrolled_summary,
-            "verify: template loaded"
+        if templates.is_empty() {
+            return Err(crate::domain::error::DomainError::NoEnrolledTemplate.into());
+        }
+        let template_count = templates.len();
+        let required_matches = template_quorum_required(template_count);
+        tracing::info!(
+            template_count,
+            required_matches,
+            quorum = "≥50% of templates must match this probe",
+            template_dim = templates[0].0.len(),
+            "verify: templates loaded"
         );
 
         let t_loop = Instant::now();
@@ -165,33 +177,68 @@ impl TrueIdApp {
                 tracing::debug!(frame_index = i, "verify: frame produced no embedding");
                 continue;
             };
-            let similarity = self.matcher.similarity(&probe, &enrolled);
-            let matched = self.matcher.matches(&probe, &enrolled);
 
+            let mut pass_count: usize = 0;
+            let mut best_similarity: Option<f32> = None;
+            for (ti, t) in templates.iter().enumerate() {
+                let similarity = self.matcher.similarity(&probe, t);
+                if let Some(s) = similarity {
+                    best_similarity = Some(match best_similarity {
+                        None => s,
+                        Some(prev) => prev.max(s),
+                    });
+                }
+                let passed = self.matcher.matches(&probe, t);
+                if passed {
+                    pass_count += 1;
+                    tracing::debug!(
+                        frame_index = i,
+                        template_index = ti,
+                        ?similarity,
+                        "verify: template matched probe"
+                    );
+                } else {
+                    tracing::info!(
+                        frame_index = i,
+                        template_index = ti,
+                        ?similarity,
+                        "verify: template did not match probe"
+                    );
+                }
+            }
+
+            let frame_accepted = pass_count >= required_matches;
             let probe_summary = probe.summary();
             tracing::info!(
                 frame_index = i,
-                matched,
-                ?similarity,
+                pass_count,
+                required_matches,
+                template_count,
+                frame_accepted,
+                best_similarity = ?best_similarity,
                 probe_min = probe_summary.min,
                 probe_max = probe_summary.max,
                 probe_mean = probe_summary.mean,
                 probe_l2 = probe_summary.l2_norm,
                 elapsed_ms = t_loop.elapsed().as_millis(),
-                "verify: match result"
+                "verify: quorum result for frame"
             );
 
-            if matched {
+            if frame_accepted {
                 tracing::info!(
                     total_ms = t_loop.elapsed().as_millis(),
-                    "verify: accepted"
+                    pass_count,
+                    required_matches,
+                    "verify: accepted (quorum met on this frame)"
                 );
                 return Ok(true);
             }
         }
         tracing::info!(
             total_ms = t_loop.elapsed().as_millis(),
-            "verify: rejected (no matching frame)"
+            required_matches,
+            template_count,
+            "verify: rejected (no frame met template quorum)"
         );
         Ok(false)
     }
@@ -205,7 +252,11 @@ impl TrueIdApp {
             HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
         }
 
-        if self.template_store.load(user)?.is_some() {
+        if self
+            .template_store
+            .load_all(user)?
+            .is_some_and(|t| !t.is_empty())
+        {
             return Err(crate::domain::error::DomainError::AlreadyEnrolled.into());
         }
 
@@ -245,8 +296,75 @@ impl TrueIdApp {
             template_dim = template.0.len(),
             "enroll: template averaged"
         );
-        self.template_store.save(user, &template)?;
+        self.template_store.save_all(user, std::slice::from_ref(&template))?;
         tracing::info!("enroll: stored ok");
+        Ok(())
+    }
+
+    /// Append a new template from a fresh capture (user must already be enrolled).
+    /// Existing templates are kept; verification accepts a probe if it matches any template.
+    pub fn add_template(&self, user: &UserId) -> Result<(), AppError> {
+        let span = tracing::info_span!("add_template", uid = user.0);
+        let _g = span.enter();
+
+        match self.health.status() {
+            HealthStatus::Healthy => {}
+            HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
+        }
+
+        let mut templates = self
+            .template_store
+            .load_all(user)?
+            .filter(|t| !t.is_empty())
+            .ok_or(crate::domain::error::DomainError::NoEnrolledTemplate)?;
+        tracing::debug!(
+            existing_templates = templates.len(),
+            "add_template: loaded existing"
+        );
+
+        let spec = self.capture.enroll.validate()?;
+        tracing::info!(
+            warmup_discard = spec.warmup_discard,
+            frame_count = spec.frame_count,
+            "add_template: capture spec"
+        );
+
+        let t_cap = Instant::now();
+        let frames = self.video.capture(spec)?;
+        tracing::info!(
+            returned = frames.len(),
+            capture_ms = t_cap.elapsed().as_millis(),
+            "add_template: frames from camera"
+        );
+
+        let mut embeddings = Vec::with_capacity(frames.len());
+        for (i, frame) in frames.iter().enumerate() {
+            if let Some(e) = self.try_embed_from_frame(frame)? {
+                tracing::debug!(
+                    frame_index = i,
+                    dim = e.0.len(),
+                    "add_template: frame contributed embedding"
+                );
+                embeddings.push(e);
+            } else {
+                tracing::debug!(frame_index = i, "add_template: frame skipped");
+            }
+        }
+        if embeddings.is_empty() {
+            tracing::warn!("add_template: no usable embeddings from any frame");
+            return Err(crate::domain::error::DomainError::NoUsableFaceInCapture.into());
+        }
+        let new_template = crate::domain::Embedding::try_average(&embeddings).ok_or(
+            crate::domain::error::DomainError::EmbeddingAggregationFailed,
+        )?;
+        tracing::info!(
+            from_frames = embeddings.len(),
+            template_dim = new_template.0.len(),
+            "add_template: new template averaged"
+        );
+        templates.push(new_template);
+        self.template_store.save_all(user, &templates)?;
+        tracing::info!(total_templates = templates.len(), "add_template: stored ok");
         Ok(())
     }
 }
@@ -340,13 +458,17 @@ mod tests {
     }
 
     struct MemoryStore {
-        inner: std::sync::Mutex<std::collections::HashMap<UserId, Embedding>>,
+        inner: std::sync::Mutex<std::collections::HashMap<UserId, Vec<Embedding>>>,
     }
 
     impl MemoryStore {
         fn with_template(user: UserId, emb: Embedding) -> Self {
+            Self::with_templates(user, vec![emb])
+        }
+
+        fn with_templates(user: UserId, templates: Vec<Embedding>) -> Self {
             let mut m = std::collections::HashMap::new();
-            m.insert(user, emb);
+            m.insert(user, templates);
             Self {
                 inner: std::sync::Mutex::new(m),
             }
@@ -360,12 +482,15 @@ mod tests {
     }
 
     impl TemplateStore for MemoryStore {
-        fn load(&self, user: &UserId) -> Result<Option<Embedding>, StoreError> {
+        fn load_all(&self, user: &UserId) -> Result<Option<Vec<Embedding>>, StoreError> {
             Ok(self.inner.lock().unwrap().get(user).cloned())
         }
 
-        fn save(&self, user: &UserId, embedding: &Embedding) -> Result<(), StoreError> {
-            self.inner.lock().unwrap().insert(*user, embedding.clone());
+        fn save_all(&self, user: &UserId, templates: &[Embedding]) -> Result<(), StoreError> {
+            self.inner
+                .lock()
+                .unwrap()
+                .insert(*user, templates.to_vec());
             Ok(())
         }
     }
@@ -394,6 +519,15 @@ mod tests {
             Arc::new(ExactMatcher),
             MultiFramePolicy::default(),
         )
+    }
+
+    #[test]
+    fn template_quorum_required_is_ceil_half() {
+        assert_eq!(super::template_quorum_required(1), 1);
+        assert_eq!(super::template_quorum_required(2), 1);
+        assert_eq!(super::template_quorum_required(3), 2);
+        assert_eq!(super::template_quorum_required(4), 2);
+        assert_eq!(super::template_quorum_required(5), 3);
     }
 
     #[test]
@@ -458,8 +592,8 @@ mod tests {
         let store = Arc::new(MemoryStore::empty());
         let app = app_with_store(Arc::clone(&store), emb.clone());
         app.enroll(&UserId(2000)).unwrap();
-        let loaded = store.load(&UserId(2000)).unwrap();
-        assert_eq!(loaded, Some(emb));
+        let loaded = store.load_all(&UserId(2000)).unwrap();
+        assert_eq!(loaded, Some(vec![emb]));
     }
 
     #[test]
@@ -481,6 +615,55 @@ mod tests {
         let app = app_with_store(Arc::clone(&store), emb.clone());
         app.enroll(&UserId(4000)).unwrap();
         assert!(app.verify(&UserId(4000)).unwrap());
+    }
+
+    #[test]
+    fn verify_accepts_when_quorum_met_two_templates_one_match() {
+        let t0 = Embedding(vec![1.0, 0.0, 0.0]);
+        let t1 = Embedding(vec![0.0, 1.0, 0.0]);
+        let store = Arc::new(MemoryStore::with_templates(
+            UserId(7000),
+            vec![t0, t1.clone()],
+        ));
+        let app = app_with_store(store, t1);
+        assert!(app.verify(&UserId(7000)).unwrap());
+    }
+
+    #[test]
+    fn verify_rejects_when_quorum_not_met_three_templates_one_match() {
+        let t0 = Embedding(vec![1.0, 0.0, 0.0]);
+        let t1 = Embedding(vec![0.0, 1.0, 0.0]);
+        let t2 = Embedding(vec![0.0, 0.0, 1.0]);
+        let store = Arc::new(MemoryStore::with_templates(
+            UserId(7001),
+            vec![t0, t1, t2.clone()],
+        ));
+        let app = app_with_store(store, t2);
+        assert!(!app.verify(&UserId(7001)).unwrap());
+    }
+
+    #[test]
+    fn add_template_requires_prior_enrollment() {
+        let store = Arc::new(MemoryStore::empty());
+        let app = app_with_store(store, Embedding(vec![1.0, 0.0]));
+        let err = app.add_template(&UserId(8000)).unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Domain(DomainError::NoEnrolledTemplate)
+        ));
+    }
+
+    #[test]
+    fn add_template_appends_without_removing_first() {
+        let first = Embedding(vec![1.0, 0.0, 0.0]);
+        let second = Embedding(vec![0.0, 1.0, 0.0]);
+        let store = Arc::new(MemoryStore::with_template(UserId(9000), first.clone()));
+        let app = app_with_store(Arc::clone(&store), second.clone());
+        app.add_template(&UserId(9000)).unwrap();
+        let all = store.load_all(&UserId(9000)).unwrap().unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0], first);
+        assert_eq!(all[1], second);
     }
 
     #[test]

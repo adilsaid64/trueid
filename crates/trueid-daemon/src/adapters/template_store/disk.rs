@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 use trueid_core::ports::{StoreError, TemplateStore};
 use trueid_core::{Embedding, UserId};
 
+/// On-disk format: `{ "templates": [ [...], ... ] }`.
 #[derive(Serialize, Deserialize)]
 struct TemplateFile {
-    embedding: Vec<f32>,
+    templates: Vec<Vec<f32>>,
 }
 
 pub struct FileTemplateStore {
@@ -80,7 +81,7 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), StoreError> {
 }
 
 impl TemplateStore for FileTemplateStore {
-    fn load(&self, user: &UserId) -> Result<Option<Embedding>, StoreError> {
+    fn load_all(&self, user: &UserId) -> Result<Option<Vec<Embedding>>, StoreError> {
         let _g = self.lock.lock().map_err(|_| StoreError::Failed("lock poisoned".into()))?;
         let path = self.path_for(user);
         if !path.is_file() {
@@ -89,14 +90,18 @@ impl TemplateStore for FileTemplateStore {
         let raw = fs::read_to_string(&path).map_err(|e| StoreError::Failed(e.to_string()))?;
         let parsed: TemplateFile =
             serde_json::from_str(&raw).map_err(|e| StoreError::Failed(e.to_string()))?;
-        Ok(Some(Embedding(parsed.embedding)))
+        let templates: Vec<Embedding> = parsed.templates.into_iter().map(Embedding).collect();
+        if templates.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(templates))
     }
 
-    fn save(&self, user: &UserId, embedding: &Embedding) -> Result<(), StoreError> {
+    fn save_all(&self, user: &UserId, templates: &[Embedding]) -> Result<(), StoreError> {
         let _g = self.lock.lock().map_err(|_| StoreError::Failed("lock poisoned".into()))?;
         let path = self.path_for(user);
         let body = TemplateFile {
-            embedding: embedding.0.clone(),
+            templates: templates.iter().map(|e| e.0.clone()).collect(),
         };
         let json = serde_json::to_vec_pretty(&body).map_err(|e| StoreError::Failed(e.to_string()))?;
         write_atomic(&path, &json)
@@ -120,8 +125,21 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let store = FileTemplateStore::open(&dir).unwrap();
         let emb = Embedding(vec![0.25, 0.5, 0.75]);
-        store.save(&uid, &emb).unwrap();
-        assert_eq!(store.load(&uid).unwrap(), Some(emb));
+        store.save_all(&uid, &[emb.clone()]).unwrap();
+        assert_eq!(store.load_all(&uid).unwrap(), Some(vec![emb]));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn multi_template_roundtrip() {
+        let uid = UserId(43);
+        let dir = std::env::temp_dir().join("trueid-multi-template-test");
+        let _ = fs::remove_dir_all(&dir);
+        let store = FileTemplateStore::open(&dir).unwrap();
+        let a = Embedding(vec![1.0, 0.0]);
+        let b = Embedding(vec![0.0, 1.0]);
+        store.save_all(&uid, &[a.clone(), b.clone()]).unwrap();
+        assert_eq!(store.load_all(&uid).unwrap(), Some(vec![a, b]));
         let _ = fs::remove_dir_all(&dir);
     }
 }

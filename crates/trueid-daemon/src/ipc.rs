@@ -63,6 +63,7 @@ fn dispatch(app: &TrueIdApp, request: Request) -> Response {
         Request::Ping => "ping",
         Request::Verify { .. } => "verify",
         Request::Enroll { .. } => "enroll",
+        Request::AddTemplate { .. } => "add_template",
     };
     tracing::info!(op, ?request, "ipc: request");
 
@@ -83,6 +84,12 @@ fn dispatch(app: &TrueIdApp, request: Request) -> Response {
         },
         Request::Enroll { uid } => match app.enroll(&UserId(uid)) {
             Ok(()) => Response::EnrollOk,
+            Err(e) => Response::Error {
+                message: e.to_string(),
+            },
+        },
+        Request::AddTemplate { uid } => match app.add_template(&UserId(uid)) {
+            Ok(()) => Response::AddTemplateOk,
             Err(e) => Response::Error {
                 message: e.to_string(),
             },

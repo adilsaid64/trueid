@@ -31,6 +31,12 @@ enum Commands {
         #[arg(long)]
         uid: Option<u32>,
     },
+    /// Append a new face template from a capture (does not remove existing templates).
+    AddTemplate {
+        /// Linux uid (default: your uid, same as `id -u`)
+        #[arg(long)]
+        uid: Option<u32>,
+    },
 }
 
 fn main() {
@@ -91,6 +97,26 @@ fn main() {
                 }
                 Ok(_) => {
                     eprintln!("unexpected response for enroll");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("failed to reach trueid-daemon: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some(Commands::AddTemplate { uid }) => {
+            let uid = uid.unwrap_or_else(current_uid);
+            match send_request(Request::AddTemplate { uid }) {
+                Ok(Response::AddTemplateOk) => {
+                    println!("added template (uid {uid})");
+                }
+                Ok(Response::Error { message }) => {
+                    eprintln!("daemon error: {message}");
+                    std::process::exit(1);
+                }
+                Ok(_) => {
+                    eprintln!("unexpected response for add-template");
                     std::process::exit(1);
                 }
                 Err(e) => {

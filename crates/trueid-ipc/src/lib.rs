@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const IPC_PROTOCOL_VERSION: u32 = 1;
+pub const IPC_PROTOCOL_VERSION: u32 = 2;
 
 pub const SOCKET_PATH: &str = "/tmp/trueid.sock";
 
@@ -10,6 +10,8 @@ pub enum Request {
     Ping,
     Verify { uid: u32 },
     Enroll { uid: u32 },
+    /// Append a new face template from a capture (user must already be enrolled).
+    AddTemplate { uid: u32 },
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -22,6 +24,7 @@ pub enum Response {
         accepted: bool,
     },
     EnrollOk,
+    AddTemplateOk,
     Error {
         message: String,
     },
@@ -83,8 +86,23 @@ mod tests {
     }
 
     #[test]
+    fn request_add_template_roundtrip() {
+        let json = serde_json::to_string(&Request::AddTemplate { uid: 1000 }).unwrap();
+        let back: Request = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, Request::AddTemplate { uid: 1000 });
+    }
+
+    #[test]
     fn response_enroll_ok_roundtrip() {
         let r = Response::EnrollOk;
+        let json = serde_json::to_string(&r).unwrap();
+        let back: Response = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn response_add_template_ok_roundtrip() {
+        let r = Response::AddTemplateOk;
         let json = serde_json::to_string(&r).unwrap();
         let back: Response = serde_json::from_str(&json).unwrap();
         assert_eq!(back, r);

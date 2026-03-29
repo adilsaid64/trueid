@@ -9,7 +9,9 @@ pub enum StoreError {
 }
 
 pub trait TemplateStore: Send + Sync {
-    fn load(&self, user: &UserId) -> Result<Option<Embedding>, StoreError>;
+    /// All stored templates for the user, or `None` if there is no enrollment.
+    fn load_all(&self, user: &UserId) -> Result<Option<Vec<Embedding>>, StoreError>;
 
-    fn save(&self, user: &UserId, embedding: &Embedding) -> Result<(), StoreError>;
+    /// Replace the full template list for the user.
+    fn save_all(&self, user: &UserId, templates: &[Embedding]) -> Result<(), StoreError>;
 }
