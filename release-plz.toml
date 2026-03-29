@@ -3,7 +3,3 @@
 release = true
 # Update all crates together
 single-feature = true
-
-[changelog]
-# Use conventional commits for changelog
-include-commit-body = true
