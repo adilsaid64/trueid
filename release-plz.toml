@@ -1,5 +1,10 @@
 [workspace]
+release = false
 release_always = true
 git_only = true
 publish = false
 git_release_enable = true
+
+[[package]]
+name = "trueid-daemon"
+release = true
