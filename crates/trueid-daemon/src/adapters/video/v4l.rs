@@ -1,6 +1,7 @@
 //! V4L2 camera → RGB8 [`Frame`]s.
 //!
-//! One `capture`: open stream, dequeue warm-up buffers (payload discarded), then kept frames, then stop.
+//! Each `capture` opens `/dev/video{N}`, runs one burst (warm-up discards + kept frames), then
+//! closes the device so other apps can use the camera while the daemon is idle.
 
 use std::io;
 use std::sync::Mutex;
@@ -15,57 +16,56 @@ use trueid_core::ports::{CaptureError, CaptureSpec, VideoSource};
 use trueid_core::{Frame, PixelFormat, StreamModality};
 
 pub struct V4lVideoSource {
-    inner: Mutex<V4lInner>,
-}
-
-struct V4lInner {
-    // Holds the device open; stream uses the same fd.
-    #[allow(dead_code)]
-    dev: Device,
-    stream: UserptrStream,
+    index: u32,
     width: u32,
     height: u32,
-    fourcc: FourCC,
+    /// Serializes bursts; the device fd is only held during `capture`.
+    capture_lock: Mutex<()>,
 }
 
 impl V4lVideoSource {
     /// `/dev/video{index}`, requested size `width` x `height`.
     ///
     /// Tries MJPEG, YUYV, then 8-bit grey (`GREY` / `Y800`). IR-only nodes often negotiate grey.
+    ///
+    /// Opens the device briefly to validate it, then closes it so nothing holds the camera until
+    /// the next [`VideoSource::capture`].
     pub fn open_with_dimensions(
         index: u32,
         width: u32,
         height: u32,
     ) -> Result<Self, CaptureError> {
         let dev = Device::new(index as usize).map_err(io_to_capture)?;
-        let active = dev
-            .set_format(&Format::new(width, height, FourCC::new(b"MJPG")))
-            .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"YUYV"))))
-            .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"GREY"))))
-            .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"Y800"))))
-            .map_err(io_to_capture)?;
-
-        let stream =
+        let _active = negotiate_format(&dev, width, height)?;
+        let _stream =
             UserptrStream::with_buffers(&dev, Type::VideoCapture, 4).map_err(io_to_capture)?;
+        // Drop stream first so streaming is stopped; then device closes.
+        drop(_stream);
+        drop(dev);
 
         Ok(Self {
-            inner: Mutex::new(V4lInner {
-                dev,
-                stream,
-                width: active.width,
-                height: active.height,
-                fourcc: active.fourcc,
-            }),
+            index,
+            width,
+            height,
+            capture_lock: Mutex::new(()),
         })
     }
+}
+
+fn negotiate_format(dev: &Device, width: u32, height: u32) -> Result<Format, CaptureError> {
+    dev.set_format(&Format::new(width, height, FourCC::new(b"MJPG")))
+        .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"YUYV"))))
+        .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"GREY"))))
+        .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"Y800"))))
+        .map_err(io_to_capture)
 }
 
 fn io_to_capture(e: io::Error) -> CaptureError {
     CaptureError::Failed(e.to_string())
 }
 
-fn grab_raw_payload(inner: &mut V4lInner) -> Result<Vec<u8>, CaptureError> {
-    let (buf, meta) = inner.stream.next().map_err(io_to_capture)?;
+fn grab_raw_payload(stream: &mut UserptrStream) -> Result<Vec<u8>, CaptureError> {
+    let (buf, meta) = stream.next().map_err(io_to_capture)?;
     let len = meta.bytesused as usize;
     if len == 0 {
         return Err(CaptureError::Failed("empty camera frame".into()));
@@ -209,34 +209,33 @@ impl VideoSource for V4lVideoSource {
             "v4l: capture burst"
         );
 
-        let (fourcc, width, height, raws) = {
-            let mut inner = self
-                .inner
-                .lock()
-                .map_err(|_| CaptureError::Failed("camera mutex poisoned".to_string()))?;
+        let _guard = self
+            .capture_lock
+            .lock()
+            .map_err(|_| CaptureError::Failed("camera mutex poisoned".to_string()))?;
 
-            let fourcc = inner.fourcc;
-            let width = inner.width;
-            let height = inner.height;
+        let dev = Device::new(self.index as usize).map_err(io_to_capture)?;
+        let active = negotiate_format(&dev, self.width, self.height)?;
+        let fourcc = active.fourcc;
+        let width = active.width;
+        let height = active.height;
+        let mut stream =
+            UserptrStream::with_buffers(&dev, Type::VideoCapture, 4).map_err(io_to_capture)?;
 
-            let burst_result = (|| -> Result<Vec<Vec<u8>>, CaptureError> {
-                for _ in 0..warmup {
-                    grab_raw_payload(&mut inner)?;
-                }
-                let mut raws = Vec::with_capacity(keep);
-                for _ in 0..keep {
-                    raws.push(grab_raw_payload(&mut inner)?);
-                }
-                Ok(raws)
-            })();
-
-            let _ = inner.stream.stop();
-
-            match burst_result {
-                Ok(raws) => (fourcc, width, height, raws),
-                Err(e) => return Err(e),
+        let burst_result = (|| -> Result<Vec<Vec<u8>>, CaptureError> {
+            for _ in 0..warmup {
+                grab_raw_payload(&mut stream)?;
             }
-        };
+            let mut raws = Vec::with_capacity(keep);
+            for _ in 0..keep {
+                raws.push(grab_raw_payload(&mut stream)?);
+            }
+            Ok(raws)
+        })();
+
+        let _ = stream.stop();
+
+        let raws = burst_result?;
 
         let mut frames = Vec::with_capacity(keep);
         for raw in raws {
