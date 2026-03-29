@@ -7,13 +7,13 @@ From the repo root.
 Mock camera + mock face embedder (no ONNX file):
 
 ```bash
-TRUEID_USE_MOCK=1 TRUEID_USE_MOCK_EMBEDDER=1 cargo run -p trueid-daemon
+TRUEID_USE_MOCK_VIDEO_SOURCE=1 TRUEID_USE_MOCK_EMBEDDER=1 cargo run -p trueid-daemon
 ```
 
 Mock camera, real ONNX embedder:
 
 ```bash
-TRUEID_USE_MOCK=1 cargo run -p trueid-daemon
+TRUEID_USE_MOCK_VIDEO_SOURCE=1 cargo run -p trueid-daemon
 ```
 
 Real camera:
@@ -50,7 +50,7 @@ cargo run -p trueid-ctl -- verify
 
 | Variable | Role | Default |
 |----------|------|---------|
-| `TRUEID_USE_MOCK` | Use in-memory frames instead of V4L | off |
+| `TRUEID_USE_MOCK_VIDEO_SOURCE` | Use in-memory frames instead of V4L | off |
 | `TRUEID_USE_MOCK_EMBEDDER` | Constant embedding (no ONNX) | off |
 | `TRUEID_USE_MOCK_DETECTOR` | Full-frame face stub (no YuNet ONNX) | off |
 | `TRUEID_USE_PASSTHROUGH_ALIGNER` | Skip crop/warp; pass full frame to embedder (pipeline testing) | off |

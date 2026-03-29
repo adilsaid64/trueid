@@ -45,7 +45,7 @@ fn main() -> std::io::Result<()> {
     }
 
     let health = Arc::new(adapters::DefaultHealth);
-    let video: Arc<dyn trueid_core::ports::VideoSource> = if std::env::var("TRUEID_USE_MOCK")
+    let video: Arc<dyn trueid_core::ports::VideoSource> = if std::env::var("TRUEID_USE_MOCK_VIDEO_SOURCE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
     {
@@ -63,7 +63,7 @@ fn main() -> std::io::Result<()> {
                     std::io::ErrorKind::Other,
                     format!(
                         "camera open failed (index {index}): {e}. \
-                         Set TRUEID_USE_MOCK=1 to run without a device."
+                         Set TRUEID_USE_MOCK_VIDEO_SOURCE=1 to run without a device."
                     ),
                 )
             })?,
