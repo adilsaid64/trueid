@@ -20,23 +20,22 @@ jobs:
     - name: Run Clippy
       run: cargo clippy --all -- -D warnings
 
-  release-plz:
-    needs: [test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
+release:
+  needs: [test]
+  if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  runs-on: ubuntu-latest
+  permissions:
+    contents: write
+
+  steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
+
     - uses: MarcoIeni/release-plz-action@v0.5
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        command: release-pr
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        command: release
 
   build-ubuntu:
     if: startsWith(github.ref, 'refs/tags/')

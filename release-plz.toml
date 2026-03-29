@@ -1,5 +1,5 @@
 [workspace]
-# Enable releases for all packages in workspace
-release = true
-# Update all crates together
-single-feature = true
+release_always = true
+git_only = true
+publish = false
+git_release_enable = true
