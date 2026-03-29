@@ -1,0 +1,9 @@
+[workspace]
+# Enable releases for all packages in workspace
+release = true
+# Update all crates together
+single-feature = true
+
+[changelog]
+# Use conventional commits for changelog
+include-commit-body = true
