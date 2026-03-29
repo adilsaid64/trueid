@@ -14,3 +14,29 @@ nalgebra = { version = "0.33", default-features = false, features = ["std"] }
 tract-onnx = "0.21.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[package.metadata.deb]
+maintainer = "Adil Said <adilsaid64@gmail.com>"
+copyright = "2026, Adil Said"
+license-file = ["LICENSE"]
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["../../target/release/trueid-ctl", "usr/bin/", "755"],
+    ["../../target/release/trueid-daemon", "usr/bin/", "755"],
+    ["../docs/README.md", "usr/share/doc/trueid/", "644"],
+    ["../docs/models.md", "usr/share/doc/trueid/", "644"],
+    ["../../scripts/postinst.sh", "var/lib/dpkg/info/trueid-daemon.postinst", "755"],
+]
+
+[package.metadata.rpm]
+package = "trueid"
+summary = "Biometric authentication for Linux"
+license = "MIT"
+assets = [
+    ["../../target/release/trueid-ctl", "usr/bin/", "755"],
+    ["../../target/release/trueid-daemon", "usr/bin/", "755"],
+    ["../docs/README.md", "usr/share/doc/trueid/", "644"],
+    ["../docs/models.md", "usr/share/doc/trueid/", "644"],
+]

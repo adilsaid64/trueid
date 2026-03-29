@@ -1,0 +1,98 @@
+name: Build and Package
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source $HOME/.cargo/env
+    - name: Run Tests
+      run: cargo test --all
+    - name: Run Clippy
+      run: cargo clippy --all -- -D warnings
+
+  release:
+    needs: [test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+    - name: Semantic Release
+      uses: cycjimmy/semantic-release-action@v3
+      with:
+        semantic_version: 19
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-ubuntu:
+    needs: [release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source $HOME/.cargo/env
+    - name: Install cargo-deb
+      run: cargo install cargo-deb
+    - name: Build Release
+      run: cargo build --release
+    - name: Create .deb Package
+      run: cd crates/trueid-daemon && cargo deb
+    - name: Upload .deb Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: trueid-ubuntu-deb
+        path: crates/trueid-daemon/target/debian/*.deb
+
+  build-fedora:
+    needs: [release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest 
+    container: fedora:latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust
+      run: |
+        dnf install -y rust cargo
+    - name: Install cargo-rpm
+      run: cargo install cargo-rpm
+    - name: Build Release
+      run: cargo build --release
+    - name: Create .rpm Package
+      run: cd crates/trueid-daemon && cargo rpm
+    - name: Upload .rpm Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: trueid-fedora-rpm
+        path: crates/trueid-daemon/target/rpmbuild/RPMS/**/*.rpm
+
+  deploy:
+    needs: [build-ubuntu, build-fedora]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/download-artifact@v3
+      with:
+        name: trueid-ubuntu-deb
+    - uses: actions/download-artifact@v3
+      with:
+        name: trueid-fedora-rpm
+    - name: Upload to Release
+      run: |
+        gh release upload $(gh release list -L1 --json tagName --jq .[].tagName) *.deb *.rpm
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
