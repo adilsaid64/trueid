@@ -1,10 +1,10 @@
-//! Crop / warp the face region for embedding.
-//!
-//! - When [`FaceLandmarks`] are present: similarity transform from eye positions to InsightFace-style
-//!   reference points (scaled to output size), then bilinear sampling.
-//! - Otherwise: square crop around the bounding box with margin, then resize.
+//! Landmark-based similarity warp (YuNet) or square bbox crop + resize to `output_size`.
+//! Optional `TRUEID_DEBUG_ALIGNED_DIR`: write each aligned face as PNG for debugging.
 
-use std::time::Instant;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use image::imageops::FilterType;
 use image::{DynamicImage, Rgb, RgbImage};
@@ -20,6 +20,58 @@ const REF112_RE: (f32, f32) = (73.5318, 51.5014);
 
 /// Expand bbox by this fraction of width/height before squaring (e.g. 0.25 → +25% size).
 const DEFAULT_MARGIN: f32 = 0.25;
+
+static ALIGNED_DUMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+static ALIGNED_DUMP_ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+fn aligned_dump_root() -> Option<&'static Path> {
+    ALIGNED_DUMP_ROOT
+        .get_or_init(|| {
+            std::env::var("TRUEID_DEBUG_ALIGNED_DIR")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+        })
+        .as_deref()
+}
+
+fn maybe_dump_aligned_face(aligned: &Frame) {
+    let Some(root) = aligned_dump_root() else {
+        return;
+    };
+    if aligned.format != PixelFormat::Rgb8 {
+        tracing::warn!("aligned dump: skip non-rgb8 frame");
+        return;
+    }
+
+    if let Err(e) = std::fs::create_dir_all(root) {
+        tracing::warn!(error = %e, path = %root.display(), "aligned dump: create_dir_all failed");
+        return;
+    }
+
+    let seq = ALIGNED_DUMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let name = format!(
+        "aligned-{}-{}-{}.png",
+        now.as_secs(),
+        now.subsec_nanos(),
+        seq
+    );
+    let file = root.join(name);
+    match image::save_buffer(
+        &file,
+        &aligned.bytes,
+        aligned.width,
+        aligned.height,
+        image::ColorType::Rgb8,
+    ) {
+        Ok(()) => tracing::info!(path = %file.display(), w = aligned.width, h = aligned.height, "aligned face dumped"),
+        Err(e) => tracing::warn!(error = %e, path = %file.display(), "aligned dump: save failed"),
+    }
+}
 
 /// Face-aligned crop for [`FaceEmbedder`](trueid_core::ports::FaceEmbedder).
 pub struct CropFaceAligner {
@@ -63,15 +115,9 @@ impl FaceAligner for CropFaceAligner {
             warp_similarity_eyes(&rgb, frame.width, frame.height, lm, out)?
         } else {
             let bb = square_crop_bbox(&detection.bbox, self.margin);
-            tracing::trace!(
-                ?bb,
-                "align: bbox-only crop (no landmarks)"
-            );
+            tracing::trace!(?bb, "align: bbox-only crop (no landmarks)");
             crop_and_resize(&rgb, frame.width, frame.height, &bb, out)?
         };
-
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(cropped.as_raw());
 
         tracing::debug!(
             mode = if has_landmarks {
@@ -85,13 +131,15 @@ impl FaceAligner for CropFaceAligner {
             "align: done"
         );
 
-        Ok(Frame {
+        let aligned = Frame {
             modality: frame.modality,
             width: out,
             height: out,
             format: PixelFormat::Rgb8,
-            bytes,
-        })
+            bytes: cropped.into_raw(),
+        };
+        maybe_dump_aligned_face(&aligned);
+        Ok(aligned)
     }
 }
 

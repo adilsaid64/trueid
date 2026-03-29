@@ -35,7 +35,7 @@ flowchart TD
         MockVideo[MockVideoSource]
         MockDet[FullFrameFaceDetector]
         YuNet[OnnxYuNetDetector]
-        MockAlign[PassthroughFaceAligner]
+        CropAlign[CropFaceAligner]
         MockLive[AlwaysLiveLiveness]
         Cosine[CosineMatcher]
         FileStore[FileTemplateStore]
@@ -57,7 +57,7 @@ flowchart TD
     Video --> MockVideo
     Det --> MockDet
     Det --> YuNet
-    Align --> MockAlign
+    Align --> CropAlign
     Live --> MockLive
     Matcher --> Cosine
     Store --> FileStore

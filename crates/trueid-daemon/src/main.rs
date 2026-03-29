@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use trueid_core::{Embedding, MultiFramePolicy, TrueIdApp};
-use trueid_core::ports::{FaceDetector, FaceEmbedder};
+use trueid_core::ports::{FaceAligner, FaceDetector, FaceEmbedder};
 use trueid_ipc::SOCKET_PATH;
 
 mod adapters;
@@ -96,7 +96,15 @@ fn main() -> std::io::Result<()> {
                 std::io::Error::new(std::io::ErrorKind::Other, e)
             })?
         };
-    let aligner = Arc::new(adapters::CropFaceAligner::default());
+    let aligner: Arc<dyn FaceAligner> =
+        if std::env::var("TRUEID_USE_PASSTHROUGH_ALIGNER")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            Arc::new(adapters::PassthroughFaceAligner)
+        } else {
+            Arc::new(adapters::CropFaceAligner::default())
+        };
     let liveness = Arc::new(adapters::AlwaysLiveLiveness);
 
     let app = Arc::new(TrueIdApp::new(

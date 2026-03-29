@@ -1,12 +1,16 @@
 //! V4L2 camera → RGB8 [`Frame`]s.
 //!
-//! Each `capture` opens `/dev/video{N}`, runs one burst (warm-up discards + kept frames), then
-//! closes the device so other apps can use the camera while the daemon is idle.
+//! Opens `/dev/video{N}` only during each capture burst, decodes MJPEG (EXIF orientation) or raw
+//! YUYV/grey, then optional `TRUEID_V4L_ROTATE_180` / `TRUEID_V4L_FLIP_VERTICAL` when EXIF is absent.
 
 use std::io;
-use std::sync::Mutex;
+use std::io::Cursor;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+use image::imageops;
+use image::metadata::Orientation;
+use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage};
 use v4l::buffer::Type;
 use v4l::io::traits::{CaptureStream, Stream as V4lStream};
 use v4l::io::userptr::Stream as UserptrStream;
@@ -89,30 +93,93 @@ fn decode_payload(
     payload: &[u8],
     width: u32,
     height: u32,
-) -> Result<Vec<u8>, CaptureError> {
-    if matches_fourcc(fourcc, b"MJPG") {
-        let img = image::load_from_memory_with_format(payload, image::ImageFormat::Jpeg).map_err(
-            |e| CaptureError::Failed(format!("mjpeg decode: {e}")),
-        )?;
-        let rgb = img.to_rgb8();
-        if rgb.width() != width || rgb.height() != height {
-            return Err(CaptureError::Failed(format!(
-                "jpeg size {}x{} != expected {width}x{height}",
-                rgb.width(),
-                rgb.height()
-            )));
-        }
-        Ok(rgb.into_raw())
+) -> Result<(Vec<u8>, u32, u32), CaptureError> {
+    let (bytes, w, h) = if matches_fourcc(fourcc, b"MJPG") {
+        decode_mjpeg_apply_exif(payload)?
     } else if matches_fourcc(fourcc, b"YUYV") {
-        yuyv_to_rgb(payload, width, height)
+        let bytes = yuyv_to_rgb(payload, width, height)?;
+        (bytes, width, height)
     } else if matches_fourcc(fourcc, b"GREY") || matches_fourcc(fourcc, b"Y800") {
-        grey8_to_rgb(payload, width, height)
+        let bytes = grey8_to_rgb(payload, width, height)?;
+        (bytes, width, height)
     } else {
-        Err(CaptureError::Failed(format!(
+        return Err(CaptureError::Failed(format!(
             "unsupported fourcc {:?} (want MJPG, YUYV, GREY, or Y800)",
             fourcc.str().unwrap_or("?")
-        )))
+        )));
+    };
+    apply_optional_sensor_fix(bytes, w, h)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum V4lPixelFix {
+    None,
+    Rotate180,
+    FlipVertical,
+}
+
+fn env_truthy(key: &str) -> bool {
+    std::env::var(key)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn pixel_fix_from_env() -> V4lPixelFix {
+    static FIX: OnceLock<V4lPixelFix> = OnceLock::new();
+    *FIX.get_or_init(|| {
+        let f = if env_truthy("TRUEID_V4L_ROTATE_180") {
+            V4lPixelFix::Rotate180
+        } else if env_truthy("TRUEID_V4L_FLIP_VERTICAL") {
+            V4lPixelFix::FlipVertical
+        } else {
+            V4lPixelFix::None
+        };
+        if f != V4lPixelFix::None {
+            tracing::info!(?f, "v4l: sensor pixel fix enabled");
+        }
+        f
+    })
+}
+
+fn apply_optional_sensor_fix(
+    rgb: Vec<u8>,
+    width: u32,
+    height: u32,
+) -> Result<(Vec<u8>, u32, u32), CaptureError> {
+    let fix = pixel_fix_from_env();
+    if fix == V4lPixelFix::None {
+        return Ok((rgb, width, height));
     }
+    let img = RgbImage::from_raw(width, height, rgb).ok_or_else(|| {
+        CaptureError::Failed("sensor fix: invalid rgb dimensions".into())
+    })?;
+    let out = if fix == V4lPixelFix::Rotate180 {
+        imageops::rotate180(&img)
+    } else {
+        imageops::flip_vertical(&img)
+    };
+    let w = out.width();
+    let h = out.height();
+    Ok((out.into_raw(), w, h))
+}
+
+fn decode_mjpeg_apply_exif(payload: &[u8]) -> Result<(Vec<u8>, u32, u32), CaptureError> {
+    let mut decoder = ImageReader::with_format(Cursor::new(payload), ImageFormat::Jpeg)
+        .into_decoder()
+        .map_err(|e| CaptureError::Failed(format!("mjpeg decoder: {e}")))?;
+    let orientation = decoder
+        .orientation()
+        .map_err(|e| CaptureError::Failed(format!("mjpeg orientation: {e}")))?;
+    let mut img = DynamicImage::from_decoder(decoder)
+        .map_err(|e| CaptureError::Failed(format!("mjpeg decode: {e}")))?;
+    if orientation != Orientation::NoTransforms {
+        tracing::debug!(?orientation, "v4l: applying JPEG EXIF orientation");
+    }
+    img.apply_orientation(orientation);
+    let rgb = img.to_rgb8();
+    let w = rgb.width();
+    let h = rgb.height();
+    Ok((rgb.into_raw(), w, h))
 }
 
 fn grey8_to_rgb(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CaptureError> {
@@ -239,21 +306,27 @@ impl VideoSource for V4lVideoSource {
 
         let mut frames = Vec::with_capacity(keep);
         for raw in raws {
-            let bytes = decode_payload(&fourcc, &raw, width, height)?;
+            let (bytes, fw, fh) = decode_payload(&fourcc, &raw, width, height)?;
             frames.push(Frame {
                 modality: StreamModality::Rgb,
-                width,
-                height,
+                width: fw,
+                height: fh,
                 format: PixelFormat::Rgb8,
                 bytes,
             });
         }
+        let (log_w, log_h) = frames
+            .last()
+            .map(|f| (f.width, f.height))
+            .unwrap_or((width, height));
         tracing::info!(
             warmup_discard = warmup,
             returned = frames.len(),
             fourcc = ?fourcc.str().unwrap_or("?"),
-            w = width,
-            h = height,
+            negotiated_w = width,
+            negotiated_h = height,
+            w = log_w,
+            h = log_h,
             elapsed_ms = t0.elapsed().as_millis(),
             "v4l: capture done"
         );
