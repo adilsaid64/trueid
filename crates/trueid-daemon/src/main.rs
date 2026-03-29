@@ -96,7 +96,7 @@ fn main() -> std::io::Result<()> {
                 std::io::Error::new(std::io::ErrorKind::Other, e)
             })?
         };
-    let aligner = Arc::new(adapters::PassthroughFaceAligner);
+    let aligner = Arc::new(adapters::CropFaceAligner::default());
     let liveness = Arc::new(adapters::AlwaysLiveLiveness);
 
     let app = Arc::new(TrueIdApp::new(
