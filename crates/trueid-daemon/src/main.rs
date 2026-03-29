@@ -24,7 +24,7 @@ fn parse_match_threshold() -> f32 {
     std::env::var("TRUEID_MATCH_THRESHOLD")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(0.45)
+        .unwrap_or(0.70)
 }
 
 /// `tracing-subscriber` fmt layer + `EnvFilter` from `RUST_LOG` (same convention as `env_logger`).
