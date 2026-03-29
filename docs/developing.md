@@ -22,20 +22,6 @@ Real camera:
 cargo run -p trueid-daemon
 ```
 
-## Face detector ONNX (YuNet)
-
-Default is **OpenCV Zoo YuNet** (`face_detection_yunet_2023mar.onnx`, fixed **640×640** input). Place it at:
-
-`$XDG_DATA_HOME/trueid/models/face_detection_yunet_2023mar.onnx`
-
-or set **`TRUEID_FACE_DETECTOR_MODEL`** to the file path.
-
-Download (same file the adapter expects):
-
-`https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx`
-
-For **full-frame stub** (no detector model): `TRUEID_USE_MOCK_DETECTOR=1`.
-
 ## CLI
 
 Another terminal:
