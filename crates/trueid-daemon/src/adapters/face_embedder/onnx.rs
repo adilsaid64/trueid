@@ -28,10 +28,18 @@ impl OnnxFaceEmbedder {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, FaceEmbedError> {
         let path = path.as_ref();
         let model = tract_onnx::onnx()
-            .model_for_path(path)
-            .map_err(|e| FaceEmbedError::Failed(format!("load onnx {path:?}: {e}")))?
-            .into_optimized()
-            .map_err(|e| FaceEmbedError::Failed(format!("optimize onnx {path:?}: {e}")))?;
+        .model_for_path(path)
+        .map_err(|e| FaceEmbedError::Failed(format!("load onnx {path:?}: {e}")))?
+        .with_input_fact(
+            0,
+            InferenceFact::dt_shape(
+                f32::datum_type(),
+                tvec!(1, 3, 112, 112),
+            ),
+        )
+        .map_err(|e| FaceEmbedError::Failed(format!("set input fact: {e}")))?
+        .into_optimized()
+        .map_err(|e| FaceEmbedError::Failed(format!("optimize onnx {path:?}: {e}")))?;
 
         let fact = model
             .input_fact(0)
