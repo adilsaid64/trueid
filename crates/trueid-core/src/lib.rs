@@ -10,6 +10,6 @@ pub use ports::{
 pub use application::error::AppError;
 pub use domain::error::DomainError;
 pub use domain::{
-    BoundingBox, Embedding, FaceDetection, FaceLandmarks, Frame, PixelFormat, StreamModality,
-    UserId,
+    BoundingBox, Embedding, EmbeddingSummary, FaceDetection, FaceLandmarks, Frame, PixelFormat,
+    StreamModality, UserId,
 };

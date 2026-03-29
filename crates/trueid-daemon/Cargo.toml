@@ -11,3 +11,5 @@ v4l = "0.14"
 trueid-core = { path = "../trueid-core" }
 trueid-ipc = { path = "../trueid-ipc" }
 tract-onnx = "0.21.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

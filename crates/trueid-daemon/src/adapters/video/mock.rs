@@ -26,6 +26,12 @@ impl VideoSource for MockVideoSource {
 
     fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError> {
         let spec = spec.validate()?;
+        tracing::debug!(
+            frame_count = spec.frame_count,
+            w = self.frame.width,
+            h = self.frame.height,
+            "mock video: capture"
+        );
         Ok((0..spec.frame_count).map(|_| self.frame.clone()).collect())
     }
 }

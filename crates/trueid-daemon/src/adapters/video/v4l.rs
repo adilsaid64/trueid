@@ -4,6 +4,7 @@
 
 use std::io;
 use std::sync::Mutex;
+use std::time::Instant;
 
 use v4l::buffer::Type;
 use v4l::io::traits::{CaptureStream, Stream as V4lStream};
@@ -201,6 +202,12 @@ impl VideoSource for V4lVideoSource {
         let spec = spec.validate()?;
         let warmup = spec.warmup_discard as usize;
         let keep = spec.frame_count as usize;
+        let t0 = Instant::now();
+        tracing::debug!(
+            warmup_discard = warmup,
+            frame_count = keep,
+            "v4l: capture burst"
+        );
 
         let (fourcc, width, height, raws) = {
             let mut inner = self
@@ -242,6 +249,15 @@ impl VideoSource for V4lVideoSource {
                 bytes,
             });
         }
+        tracing::info!(
+            warmup_discard = warmup,
+            returned = frames.len(),
+            fourcc = ?fourcc.str().unwrap_or("?"),
+            w = width,
+            h = height,
+            elapsed_ms = t0.elapsed().as_millis(),
+            "v4l: capture done"
+        );
         Ok(frames)
     }
 }

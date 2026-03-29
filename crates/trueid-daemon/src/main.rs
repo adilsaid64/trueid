@@ -27,7 +27,19 @@ fn parse_match_threshold() -> f32 {
         .unwrap_or(0.45)
 }
 
+/// `tracing-subscriber` fmt layer + `EnvFilter` from `RUST_LOG` (same convention as `env_logger`).
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .try_init();
+}
+
 fn main() -> std::io::Result<()> {
+    init_tracing();
+
     if Path::new(SOCKET_PATH).exists() {
         fs::remove_file(SOCKET_PATH)?;
     }

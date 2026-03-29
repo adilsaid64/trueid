@@ -1,24 +1,29 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
+use std::time::Instant;
 
 use trueid_core::{TrueIdApp, UserId};
 use trueid_ipc::{IPC_PROTOCOL_VERSION, Request, Response};
 
 pub fn run_unix_socket(path: &str, app: Arc<TrueIdApp>) -> std::io::Result<()> {
     let listener = UnixListener::bind(path)?;
-    eprintln!("trueid-daemon listening on {path} (ipc protocol v{IPC_PROTOCOL_VERSION})");
+    tracing::info!(
+        path,
+        ipc_version = IPC_PROTOCOL_VERSION,
+        "trueid-daemon listening (unix socket)"
+    );
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 let app = Arc::clone(&app);
                 if let Err(e) = handle_connection(stream, &app) {
-                    eprintln!("connection error: {e}");
+                    tracing::warn!(error = %e, "ipc: connection error");
                 }
             }
             Err(err) => {
-                eprintln!("accept error: {err}");
+                tracing::warn!(error = %err, "ipc: accept error");
             }
         }
     }
@@ -53,7 +58,15 @@ fn handle_connection(stream: UnixStream, app: &TrueIdApp) -> std::io::Result<()>
 }
 
 fn dispatch(app: &TrueIdApp, request: Request) -> Response {
-    match request {
+    let t0 = Instant::now();
+    let op = match &request {
+        Request::Ping => "ping",
+        Request::Verify { .. } => "verify",
+        Request::Enroll { .. } => "enroll",
+    };
+    tracing::info!(op, ?request, "ipc: request");
+
+    let response = match request {
         Request::Ping => match app.ping() {
             Ok(()) => Response::Pong {
                 ipc_version: IPC_PROTOCOL_VERSION,
@@ -74,5 +87,13 @@ fn dispatch(app: &TrueIdApp, request: Request) -> Response {
                 message: e.to_string(),
             },
         },
-    }
+    };
+
+    tracing::info!(
+        op,
+        elapsed_ms = t0.elapsed().as_millis(),
+        ok = !matches!(&response, Response::Error { .. }),
+        "ipc: done"
+    );
+    response
 }

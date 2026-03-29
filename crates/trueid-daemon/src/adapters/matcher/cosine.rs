@@ -26,7 +26,11 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> Option<f32> {
 
 impl EmbeddingMatcher for CosineMatcher {
     fn matches(&self, probe: &Embedding, enrolled: &Embedding) -> bool {
-        cosine_similarity(probe.as_slice(), enrolled.as_slice())
+        self.similarity(probe, enrolled)
             .is_some_and(|s| s >= self.threshold)
+    }
+
+    fn similarity(&self, probe: &Embedding, enrolled: &Embedding) -> Option<f32> {
+        cosine_similarity(probe.as_slice(), enrolled.as_slice())
     }
 }

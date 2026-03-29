@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::domain::{Embedding, Frame, UserId};
 use crate::ports::{
@@ -63,16 +64,57 @@ impl TrueIdApp {
 
     /// Detect → align → liveness → embed. `None` if skipped (no face, not live, etc.).
     fn try_embed_from_frame(&self, frame: &Frame) -> Result<Option<Embedding>, AppError> {
+        let t0 = Instant::now();
         let Some(det) = self.detector.detect_primary(frame)? else {
+            tracing::debug!(
+                w = frame.width,
+                h = frame.height,
+                elapsed_ms = t0.elapsed().as_millis(),
+                "pipeline: detect → no face"
+            );
             return Ok(None);
         };
+        tracing::debug!(
+            w = frame.width,
+            h = frame.height,
+            bbox = ?det.bbox,
+            has_landmarks = det.landmarks.is_some(),
+            "pipeline: detect → face"
+        );
+
+        let t_align = Instant::now();
         let aligned = self.aligner.align(frame, &det)?;
+        tracing::trace!(
+            elapsed_ms = t_align.elapsed().as_millis(),
+            "pipeline: align ok"
+        );
+
         match self.liveness.verify_live(&aligned) {
             Ok(()) => {}
-            Err(LivenessError::NotLive) => return Ok(None),
+            Err(LivenessError::NotLive) => {
+                tracing::debug!(
+                    elapsed_ms = t0.elapsed().as_millis(),
+                    "pipeline: liveness → not live"
+                );
+                return Ok(None);
+            }
             Err(e) => return Err(e.into()),
         }
-        Ok(Some(self.face_embedder.embed(&aligned)?))
+
+        let t_emb = Instant::now();
+        let emb = self.face_embedder.embed(&aligned)?;
+        let summ = emb.summary();
+        tracing::debug!(
+            dim = emb.0.len(),
+            embed_ms = t_emb.elapsed().as_millis(),
+            total_ms = t0.elapsed().as_millis(),
+            probe_min = summ.min,
+            probe_max = summ.max,
+            probe_mean = summ.mean,
+            probe_l2 = summ.l2_norm,
+            "pipeline: embed ok"
+        );
+        Ok(Some(emb))
     }
 
     pub fn ping(&self) -> Result<(), AppError> {
@@ -83,29 +125,81 @@ impl TrueIdApp {
     }
 
     pub fn verify(&self, user: &UserId) -> Result<bool, AppError> {
+        let span = tracing::info_span!("verify", uid = user.0);
+        let _g = span.enter();
+
         match self.health.status() {
             HealthStatus::Healthy => {}
             HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
         }
 
         let spec = self.capture.verify.validate()?;
+        tracing::info!(
+            warmup_discard = spec.warmup_discard,
+            frame_count = spec.frame_count,
+            "verify: capture spec"
+        );
+
+        let t_cap = Instant::now();
         let frames = self.video.capture(spec)?;
+        tracing::info!(
+            returned = frames.len(),
+            capture_ms = t_cap.elapsed().as_millis(),
+            "verify: frames from camera"
+        );
+
         let Some(enrolled) = self.template_store.load(user)? else {
             return Err(crate::domain::error::DomainError::NoEnrolledTemplate.into());
         };
+        let enrolled_summary = enrolled.summary();
+        tracing::debug!(
+            template_dim = enrolled.0.len(),
+            ?enrolled_summary,
+            "verify: template loaded"
+        );
 
-        for frame in frames {
-            let Some(probe) = self.try_embed_from_frame(&frame)? else {
+        let t_loop = Instant::now();
+
+        for (i, frame) in frames.iter().enumerate() {
+            let Some(probe) = self.try_embed_from_frame(frame)? else {
+                tracing::debug!(frame_index = i, "verify: frame produced no embedding");
                 continue;
             };
-            if self.matcher.matches(&probe, &enrolled) {
+            let similarity = self.matcher.similarity(&probe, &enrolled);
+            let matched = self.matcher.matches(&probe, &enrolled);
+
+            let probe_summary = probe.summary();
+            tracing::info!(
+                frame_index = i,
+                matched,
+                ?similarity,
+                probe_min = probe_summary.min,
+                probe_max = probe_summary.max,
+                probe_mean = probe_summary.mean,
+                probe_l2 = probe_summary.l2_norm,
+                elapsed_ms = t_loop.elapsed().as_millis(),
+                "verify: match result"
+            );
+
+            if matched {
+                tracing::info!(
+                    total_ms = t_loop.elapsed().as_millis(),
+                    "verify: accepted"
+                );
                 return Ok(true);
             }
         }
+        tracing::info!(
+            total_ms = t_loop.elapsed().as_millis(),
+            "verify: rejected (no matching frame)"
+        );
         Ok(false)
     }
 
     pub fn enroll(&self, user: &UserId) -> Result<(), AppError> {
+        let span = tracing::info_span!("enroll", uid = user.0);
+        let _g = span.enter();
+
         match self.health.status() {
             HealthStatus::Healthy => {}
             HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
@@ -116,20 +210,43 @@ impl TrueIdApp {
         }
 
         let spec = self.capture.enroll.validate()?;
+        tracing::info!(
+            warmup_discard = spec.warmup_discard,
+            frame_count = spec.frame_count,
+            "enroll: capture spec"
+        );
+
+        let t_cap = Instant::now();
         let frames = self.video.capture(spec)?;
+        tracing::info!(
+            returned = frames.len(),
+            capture_ms = t_cap.elapsed().as_millis(),
+            "enroll: frames from camera"
+        );
+
         let mut embeddings = Vec::with_capacity(frames.len());
-        for frame in &frames {
+        for (i, frame) in frames.iter().enumerate() {
             if let Some(e) = self.try_embed_from_frame(frame)? {
+                tracing::debug!(frame_index = i, dim = e.0.len(), "enroll: frame contributed embedding");
                 embeddings.push(e);
+            } else {
+                tracing::debug!(frame_index = i, "enroll: frame skipped");
             }
         }
         if embeddings.is_empty() {
+            tracing::warn!("enroll: no usable embeddings from any frame");
             return Err(crate::domain::error::DomainError::NoUsableFaceInCapture.into());
         }
         let template = crate::domain::Embedding::try_average(&embeddings).ok_or(
             crate::domain::error::DomainError::EmbeddingAggregationFailed,
         )?;
+        tracing::info!(
+            from_frames = embeddings.len(),
+            template_dim = template.0.len(),
+            "enroll: template averaged"
+        );
         self.template_store.save(user, &template)?;
+        tracing::info!("enroll: stored ok");
         Ok(())
     }
 }
@@ -257,6 +374,10 @@ mod tests {
     impl EmbeddingMatcher for ExactMatcher {
         fn matches(&self, probe: &Embedding, enrolled: &Embedding) -> bool {
             probe == enrolled
+        }
+
+        fn similarity(&self, probe: &Embedding, enrolled: &Embedding) -> Option<f32> {
+            Some(if probe == enrolled { 1.0 } else { 0.0 })
         }
     }
 

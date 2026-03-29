@@ -5,6 +5,7 @@
 
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::Instant;
 
 use image::{imageops::FilterType, DynamicImage, Rgb, RgbImage};
 use tract_onnx::prelude::*;
@@ -324,14 +325,17 @@ fn to_detection(candidate: &FaceCandidate, frame: &Frame) -> FaceDetection {
 
 impl FaceDetector for OnnxYuNetDetector {
     fn detect_primary(&self, frame: &Frame) -> Result<Option<FaceDetection>, DetectError> {
+        let t0 = Instant::now();
         let tensor = Self::preprocess(frame)?;
         let input = tensor.into_tvalue();
+        let t_inf = Instant::now();
         let outputs = self
             .model
             .lock()
             .map_err(|_| DetectError::Failed("detector lock poisoned".into()))?
             .run(tvec!(input))
             .map_err(|e| DetectError::Failed(format!("inference: {e}")))?;
+        let infer_ms = t_inf.elapsed().as_millis();
 
         let (pad_w, pad_h) = Self::pad_dims(INPUT_W, INPUT_H);
         let mut faces = Self::postprocess(
@@ -344,6 +348,13 @@ impl FaceDetector for OnnxYuNetDetector {
         )?;
 
         if faces.is_empty() {
+            tracing::debug!(
+                infer_ms,
+                total_ms = t0.elapsed().as_millis(),
+                w = frame.width,
+                h = frame.height,
+                "yunet: no face after NMS"
+            );
             return Ok(None);
         }
         faces.sort_by(|a, b| {
@@ -351,7 +362,17 @@ impl FaceDetector for OnnxYuNetDetector {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        Ok(Some(to_detection(&faces[0], frame)))
+        let best = &faces[0];
+        tracing::debug!(
+            infer_ms,
+            total_ms = t0.elapsed().as_millis(),
+            score = best.score,
+            candidates = faces.len(),
+            w = frame.width,
+            h = frame.height,
+            "yunet: primary face"
+        );
+        Ok(Some(to_detection(best, frame)))
     }
 }
 
