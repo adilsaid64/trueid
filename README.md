@@ -1,7 +1,7 @@
 # trueid
 My attempt at building a biometric authentication module  for linux systems in Rust.  A Windows Hello like system for linux and an alternative to Howdy
 
-Still a WIP :)
+Still a WIP :) and open to contributions
 
 
 * [Architecture](docs/architecture.md)
