@@ -4,7 +4,7 @@ members = [
     "crates/trueid-daemon",
     "crates/trueid-ctl",
     "crates/trueid-core",
-    "crates/trueid-ipc",
+    "crates/trueid-ipc", "crates/trueid-pam",
 ]
 
 [workspace.metadata.release]

@@ -33,8 +33,13 @@ pub enum Response {
 pub fn send_request(request: Request) -> std::io::Result<Response> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
-
+    use std::time::Duration;
+    
     let mut stream = UnixStream::connect(SOCKET_PATH)?;
+
+    let timeout = Duration::from_secs(5);
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
 
     let request_json = serde_json::to_string(&request)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
