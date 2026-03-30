@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+
+systemctl daemon-reload || true
+systemctl enable trueid || true
+systemctl start trueid || true
