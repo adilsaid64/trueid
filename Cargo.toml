@@ -6,3 +6,12 @@ members = [
     "crates/trueid-core",
     "crates/trueid-ipc",
 ]
+
+[workspace.metadata.release]
+shared-version = true
+tag-name = "v{{version}}"
+tag-prefix = ""
+publish = false
+push = true
+consolidate-commits = true
+pre-release-commit-message = "chore(release): release {{version}}"
