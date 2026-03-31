@@ -1,82 +1,112 @@
-use libc::{getpwnam_r, passwd};
-use pam::constants::PamFlag;
-use pam::module::{PamHandle, PamResultCode};
-use std::ffi::CString;
+use libc::{c_char, c_int, getpwnam_r, passwd, uid_t};
+use std::ffi::CStr;
 use std::ptr;
-use trueid_ipc::{send_request, Request, Response};
+use trueid_ipc::{Request, Response, send_request};
 
-#[unsafe(no_mangle)]
-pub extern "C" fn pam_sm_authenticate(
-    pamh: &mut PamHandle,
-    _flags: PamFlag,
-    _args: Vec<String>,
-) -> PamResultCode {
-    let user = match pamh.get_user(None) {
-        Some(u) => u,
-        None => return PamResultCode::PAM_USER_UNKNOWN,
-    };
-
-    let uid = match username_to_uid(&user) {
-        Some(id) => id,
-        None => {
-            eprintln!("trueid: failed to resolve uid for user {}", user);
-            return PamResultCode::PAM_USER_UNKNOWN;
-        }
-    };
-
-    match authenticate_via_ipc(uid) {
-        Ok(true) => PamResultCode::PAM_SUCCESS,
-        Ok(false) => {
-            eprintln!("trueid: auth failed for uid {}", uid);
-            PamResultCode::PAM_AUTH_ERR
-        }
-        Err(e) => {
-            eprintln!("trueid: IPC error for uid {}: {}", uid, e);
-            PamResultCode::PAM_AUTHINFO_UNAVAIL
-        }
-    }
+#[repr(C)]
+pub struct pam_handle_t {
+    _private: [u8; 0],
 }
 
-fn username_to_uid(username: &str) -> Option<u32> {
-    let c_username = CString::new(username).ok()?;
+unsafe extern "C" {
+    fn pam_get_user(
+        pamh: *mut pam_handle_t,
+        user: *mut *const c_char,
+        prompt: *const c_char,
+    ) -> c_int;
+}
 
-    let mut pwd: passwd = unsafe { std::mem::zeroed() };
+const PAM_SUCCESS: c_int = 0;
+const PAM_SERVICE_ERR: c_int = 3;
+const PAM_AUTH_ERR: c_int = 7;
+const PAM_USER_UNKNOWN: c_int = 10;
 
-    let raw_buf_size = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
-    let buf_size = if raw_buf_size < 0 {
-        16 * 1024
-    } else {
-        raw_buf_size as usize
+fn lookup_uid(username: &CStr) -> Result<uid_t, c_int> {
+    let mut pwd = passwd {
+        pw_name: ptr::null_mut(),
+        pw_passwd: ptr::null_mut(),
+        pw_uid: 0,
+        pw_gid: 0,
+        pw_gecos: ptr::null_mut(),
+        pw_dir: ptr::null_mut(),
+        pw_shell: ptr::null_mut(),
     };
-
-    let mut buf = vec![0u8; buf_size];
     let mut result: *mut passwd = ptr::null_mut();
+    let mut buffer = vec![0_u8; 16 * 1024];
 
-    let ret = unsafe {
+    let status = unsafe {
         getpwnam_r(
-            c_username.as_ptr(),
+            username.as_ptr(),
             &mut pwd,
-            buf.as_mut_ptr() as *mut libc::c_char,
-            buf.len(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
             &mut result,
         )
     };
 
-    if ret == 0 && !result.is_null() {
-        let pwd_ref = unsafe { &*result };
-        Some(pwd_ref.pw_uid)
-    } else {
-        None
+    if status != 0 {
+        return Err(PAM_SERVICE_ERR);
+    }
+
+    if result.is_null() {
+        return Err(PAM_USER_UNKNOWN);
+    }
+
+    Ok(pwd.pw_uid)
+}
+
+fn authenticate_username(username: &CStr) -> c_int {
+    let uid = match lookup_uid(username) {
+        Ok(uid) => uid,
+        Err(code) => return code,
+    };
+
+    match send_request(Request::Verify { uid }) {
+        Ok(Response::VerifyResult { accepted: true }) => PAM_SUCCESS,
+        Ok(Response::VerifyResult { accepted: false }) => PAM_AUTH_ERR,
+        Ok(Response::Error { .. }) => PAM_AUTH_ERR,
+        Ok(_) => PAM_SERVICE_ERR,
+        Err(_) => PAM_SERVICE_ERR,
     }
 }
 
-fn authenticate_via_ipc(uid: u32) -> Result<bool, String> {
-    let request = Request::Verify { uid };
+/// # Safety
+///
+/// PAM calls this entrypoint with a valid `pam_handle_t` for the active
+/// authentication transaction and the standard module ABI arguments.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pam_sm_authenticate(
+    pamh: *mut pam_handle_t,
+    _flags: c_int,
+    _argc: c_int,
+    _argv: *const *const c_char,
+) -> c_int {
+    let mut user_ptr: *const c_char = ptr::null();
+    let status = unsafe { pam_get_user(pamh, &mut user_ptr, ptr::null()) };
 
-    match send_request(request) {
-        Ok(Response::VerifyResult { accepted }) => Ok(accepted),
-        Ok(Response::Error { message }) => Err(message),
-        Ok(other) => Err(format!("unexpected IPC response: {:?}", other)),
-        Err(e) => Err(e.to_string()),
+    if status != PAM_SUCCESS {
+        return status;
     }
+
+    if user_ptr.is_null() {
+        return PAM_USER_UNKNOWN;
+    }
+
+    let username = unsafe { CStr::from_ptr(user_ptr) };
+
+    if username.to_bytes().is_empty() {
+        return PAM_USER_UNKNOWN;
+    }
+
+    authenticate_username(username)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pam_sm_setcred(
+    _pamh: *mut pam_handle_t,
+    _flags: c_int,
+    _argc: c_int,
+    _argv: *const *const c_char,
+) -> c_int {
+    PAM_SUCCESS
 }
