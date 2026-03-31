@@ -2,7 +2,7 @@
 header = "# Changelog\n\n"
 trim = true
 body = """
-## {{ version }} ({{ timestamp | date(format="%Y-%m-%d") }})
+## {{ version }}{% if timestamp %} ({{ timestamp | date(format="%Y-%m-%d") }}){% endif %}
 
 {% if commits | filter(attribute="breaking") | length > 0 %}
 ### ⚠️ Breaking Changes
@@ -18,20 +18,3 @@ body = """
 {% endfor %}
 {% endfor %}
 """
-
-[git]
-conventional_commits = true
-tag_pattern = "v[0-9].*"
-sort_commits = "oldest"
-
-commit_parsers = [
-    { message = "^chore\\(release\\)", skip = true },
-    { message = "^chore\\(changelog\\)", skip = true },
-
-    { message = "^feat", group = "Features" },
-    { message = "^fix", group = "Bug Fixes" },
-    { message = "^perf", group = "Performance" },
-    { message = "^refactor", group = "Refactoring" },
-    { message = "^docs", group = "Documentation" },
-    { message = "^chore", group = "Chores" },
-]
