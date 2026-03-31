@@ -34,7 +34,7 @@ pub fn send_request(request: Request) -> std::io::Result<Response> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
-    
+
     let mut stream = UnixStream::connect(SOCKET_PATH)?;
 
     let timeout = Duration::from_secs(5);
