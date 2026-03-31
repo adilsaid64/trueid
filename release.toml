@@ -1,4 +1,4 @@
-[workspace.metadata.release]
+[workspace.release]
 shared-version = true
 consolidate-commits = true
 tag-name = "v{{version}}"
