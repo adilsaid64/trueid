@@ -3,10 +3,9 @@ name: Build and Release
 on:
   push:
     branches: [main]
-    tags:
-      - 'v*'
   pull_request:
     branches: [main]
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -19,6 +18,15 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
       - run: cargo test --workspace --all-features
       - run: cargo clippy --workspace --all-features -- -D warnings
       - run: cargo fmt --all -- --check
@@ -27,10 +35,15 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
       issues: write
       pull-requests: write
+
+    outputs:
+      released: ${{ steps.semantic.outputs.released }}
+      version: ${{ steps.semantic.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -50,17 +63,41 @@ jobs:
             @semantic-release/release-notes-generator
 
       - name: Run semantic-release
+        id: semantic
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: semantic-release
+        run: |
+          npx semantic-release | tee output.txt
+
+          VERSION=$(grep -oP 'Published release \K[0-9]+\.[0-9]+\.[0-9]+' output.txt || true)
+
+          if [ -n "$VERSION" ]; then
+            echo "released=true" >> $GITHUB_OUTPUT
+            echo "version=v$VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "released=false" >> $GITHUB_OUTPUT
+          fi
 
   build-ubuntu:
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: release
+    if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.version }}
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ubuntu-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - run: cargo install cargo-deb --locked
       - run: cargo build --workspace --release
@@ -72,11 +109,15 @@ jobs:
           path: target/debian/*.deb
 
   build-fedora:
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: release
+    if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-latest
     container: fedora:latest
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.version }}
 
       - run: dnf install -y rust cargo gcc make openssl-devel
       - run: cargo install cargo-rpm --locked
@@ -89,11 +130,13 @@ jobs:
           path: target/release/rpmbuild/RPMS/**/*.rpm
 
   deploy:
-    needs: [build-ubuntu, build-fedora]
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [release, build-ubuntu, build-fedora]
+    if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
+
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -101,8 +144,8 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Upload to release
+      - name: Upload to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${GITHUB_REF#refs/tags/}" dist/* --clobber
+          gh release upload "${{ needs.release.outputs.version }}" dist/* --clobber
