@@ -3,8 +3,6 @@ name: Build and Release
 on:
   push:
     branches: [main]
-    tags:
-      - 'v*'
   pull_request:
     branches: [main]
 
@@ -20,132 +18,56 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Run tests
-        run: cargo test --workspace --all-features
-
-      - name: Run clippy
-        run: cargo clippy --workspace --all-features -- -D warnings
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - run: cargo test --workspace --all-features
+      - run: cargo clippy --workspace --all-features -- -D warnings
+      - run: cargo fmt --all -- --check
 
   release:
-    needs: [test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Check for commits since last tag
-        id: gate
-        run: |
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -z "$LAST_TAG" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          COUNT=$(git rev-list --count "${LAST_TAG}"..HEAD)
-          if [ "$COUNT" -eq 0 ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "No commits since ${LAST_TAG}; skipping release."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install tools
-        if: steps.gate.outputs.skip != 'true'
-        run: |
-          cargo install cargo-release --locked
-          cargo install git-cliff --locked
-
-      - name: Determine version bump
-        id: bump
-        if: steps.gate.outputs.skip != 'true'
-        run: |
-          chmod +x scripts/bump.sh
-          LEVEL=$(scripts/bump.sh)
-          echo "level=$LEVEL" >> "$GITHUB_OUTPUT"
-
-      - name: Generate changelog
-        if: steps.gate.outputs.skip != 'true'
-        run: git-cliff -o CHANGELOG.md
-
-      - name: Configure git
-        if: steps.gate.outputs.skip != 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Run cargo-release
-        if: steps.gate.outputs.skip != 'true'
-        run: |
-          git add CHANGELOG.md
-          cargo release ${{ steps.bump.outputs.level }} --workspace --execute --no-confirm
-
-  create-release:
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version: 20
 
-      - name: Install git-cliff
-        run: cargo install git-cliff --locked
+      - name: Install semantic-release
+        run: |
+          npm install -g semantic-release \
+            @semantic-release/changelog \
+            @semantic-release/git \
+            @semantic-release/github \
+            @semantic-release/commit-analyzer \
+            @semantic-release/release-notes-generator
 
-      - name: Create release notes
-        run: git-cliff --latest --strip header > RELEASE_NOTES.md
-
-      - name: Create GitHub release
+      - name: Run semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF#refs/tags/}"
-
-          if gh release view "$TAG" &>/dev/null; then
-            echo "Release $TAG already exists."
-            exit 0
-          fi
-
-          if [ -s RELEASE_NOTES.md ]; then
-            gh release create "$TAG" --title "$TAG" --notes-file RELEASE_NOTES.md
-          else
-            gh release create "$TAG" --title "$TAG" --generate-notes
-          fi
+        run: semantic-release
 
   build-ubuntu:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-deb
-        run: cargo install cargo-deb --locked
+      - run: cargo install cargo-deb --locked
+      - run: cargo build --workspace --release
+      - run: cd crates/trueid-daemon && cargo deb
 
-      - name: Build release
-        run: cargo build --workspace --release
-
-      - name: Create .deb package
-        run: cd crates/trueid-daemon && cargo deb
-
-      - name: Upload .deb artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: trueid-ubuntu-deb
           path: target/debian/*.deb
@@ -156,29 +78,19 @@ jobs:
     container: fedora:latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Install dependencies
-        run: dnf install -y rust cargo gcc make openssl-devel
+      - run: dnf install -y rust cargo gcc make openssl-devel
+      - run: cargo install cargo-rpm --locked
+      - run: cargo build --workspace --release
+      - run: cd crates/trueid-daemon && cargo rpm build
 
-      - name: Install cargo-rpm
-        run: cargo install cargo-rpm --locked
-
-      - name: Build release
-        run: cargo build --workspace --release
-
-      - name: Create .rpm package
-        run: cd crates/trueid-daemon && cargo rpm build
-
-      - name: Upload .rpm artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: trueid-fedora-rpm
           path: target/release/rpmbuild/RPMS/**/*.rpm
 
   deploy:
-    needs: [build-ubuntu, build-fedora, create-release]
+    needs: [build-ubuntu, build-fedora]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -194,10 +106,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mapfile -t assets < <(find dist -type f \( -name '*.deb' -o -name '*.rpm' \))
-          if [ "${#assets[@]}" -eq 0 ]; then
-            echo "No package files found under dist/"
-            exit 1
-          fi
-
-          gh release upload "${GITHUB_REF#refs/tags/}" "${assets[@]}" --clobber
+          gh release upload "${GITHUB_REF#refs/tags/}" dist/* --clobber
