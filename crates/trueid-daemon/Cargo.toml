@@ -31,10 +31,9 @@ package = "trueid"
 summary = "Biometric authentication daemon"
 license = "MIT"
 
-targets = [
-    { path = "trueid-daemon" },
-    { path = "trueid-ctl" }
-]
+[package.metadata.rpm.targets]
+trueid-daemon = { path = "target/release/trueid-daemon" }
+trueid-ctl = { path = "target/release/trueid-ctl" }
 
 [package.metadata.rpm.assets]
 "../../target/release/trueid-ctl" = { path = "/usr/bin/trueid", mode = "755" }
