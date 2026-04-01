@@ -16,58 +16,20 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [package.metadata.deb]
-name = "trueid"
 maintainer = "Adil Said <adilsaid64@gmail.com>"
-copyright = "2026, Adil Said"
-license-file = ["LICENSE"]
 depends = "$auto"
-section = "utils"
-priority = "optional"
-description = "Biometric authentication daemon and CLI for Linux"
-
-maintainer-scripts = "../../scripts"
 
 assets = [
-    # binaries
     ["../../target/release/trueid-ctl", "usr/bin/trueid", "755"],
     ["../../target/release/trueid-daemon", "usr/bin/trueidd", "755"],
-
-    # systemd
-    ["../../packaging/trueid.service", "lib/systemd/system/trueid.service", "644"],
-
-    # config
-    ["../../packaging/config.toml", "etc/trueid/config.toml", "644"],
-
-    # docs
-    ["../../docs/README.md", "usr/share/doc/trueid/README.md", "644"],
-    ["../../docs/models.md", "usr/share/doc/trueid/models.md", "644"],
 ]
 
 
 [package.metadata.rpm]
 package = "trueid"
-summary = "Biometric authentication daemon and CLI for Linux"
+summary = "Biometric authentication daemon"
 license = "MIT"
 
 [package.metadata.rpm.assets]
-# binaries
 "../../target/release/trueid-ctl" = { path = "/usr/bin/trueid", mode = "755" }
 "../../target/release/trueid-daemon" = { path = "/usr/bin/trueidd", mode = "755" }
-
-# systemd
-"../../packaging/trueid.service" = { path = "/usr/lib/systemd/system/trueid.service", mode = "644" }
-
-# config
-"../../packaging/config.toml" = { path = "/etc/trueid/config.toml", mode = "644" }
-
-# docs
-"../../docs/README.md" = { path = "/usr/share/doc/trueid/README.md", mode = "644" }
-"../../docs/models.md" = { path = "/usr/share/doc/trueid/models.md", mode = "644" }
-
-[package.metadata.rpm.scripts]
-post_install = """
-systemctl daemon-reexec || true
-systemctl daemon-reload || true
-systemctl enable trueid || true
-systemctl start trueid || true
-"""
