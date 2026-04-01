@@ -7,3 +7,27 @@ Still a WIP :) and open to contributions
 * [Architecture](docs/architecture.md)
 * [Run / config](docs/developing.md)
 * [Model](docs/models.md)
+
+## Install
+
+### Ubuntu / Debian
+
+```bash
+wget https://github.com/adilsaid64/trueid/releases/latest/download/trueid.deb
+sudo dpkg -i trueid.deb
+```
+
+### Fedora
+
+```bash
+wget https://github.com/adilsaid64/trueid/releases/latest/download/trueid.rpm
+sudo dnf install ./trueid.rpm
+```
+
+### Build from source
+
+```bash
+git clone https://github.com/adilsaid64/trueid 
+cd trueid 
+cargo build --release
+```
