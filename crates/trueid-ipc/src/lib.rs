@@ -44,11 +44,20 @@ pub fn send_request(request: Request) -> std::io::Result<Response> {
     let request_json = serde_json::to_string(&request)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
-    writeln!(stream, "{request_json}")?;
+    stream.write_all(request_json.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.flush()?;
 
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader.read_line(&mut line)?;
+
+    if line.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "empty response",
+        ));
+    }
 
     serde_json::from_str(line.trim())
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
