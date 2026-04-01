@@ -2,6 +2,7 @@
 name = "trueid-daemon"
 version = "0.1.0"
 edition = "2024"
+description = "Biometric authentication daemon for TrueID"
 
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
