@@ -1,0 +1,10 @@
+[Unit]
+Description=TrueID Daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/trueidd
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

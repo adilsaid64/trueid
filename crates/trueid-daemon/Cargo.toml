@@ -22,6 +22,7 @@ depends = "$auto"
 assets = [
     ["../../target/release/trueid-ctl", "usr/bin/trueid", "755"],
     ["../../target/release/trueid-daemon", "usr/bin/trueidd", "755"],
+    ["../../packaging/trueid.service", "lib/systemd/system/trueid.service", "644"],
 ]
 
 
@@ -30,6 +31,20 @@ package = "trueid"
 summary = "Biometric authentication daemon"
 license = "MIT"
 
+targets = [
+    { path = "trueid-daemon" },
+    { path = "trueid-ctl" }
+]
+
 [package.metadata.rpm.assets]
 "../../target/release/trueid-ctl" = { path = "/usr/bin/trueid", mode = "755" }
 "../../target/release/trueid-daemon" = { path = "/usr/bin/trueidd", mode = "755" }
+"../../packaging/trueid.service" = { path = "/usr/lib/systemd/system/trueid.service", mode = "644" }
+
+[package.metadata.rpm.scripts]
+post_install = """
+systemctl daemon-reexec || true
+systemctl daemon-reload || true
+systemctl enable trueid || true
+systemctl start trueid || true
+"""
