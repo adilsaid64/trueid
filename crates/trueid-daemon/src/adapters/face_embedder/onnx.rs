@@ -216,14 +216,22 @@ impl FaceEmbedder for OnnxFaceEmbedder {
     }
 }
 
-/// `TRUEID_FACE_MODEL` or `$XDG_DATA_HOME/trueid/models/face_embedding.onnx`.
+/// `TRUEID_FACE_MODEL` or `/var/lib/trueid/models/face_embedding.onnx`
+/// or `$XDG_DATA_HOME/trueid/models/face_embedding.onnx`.
 pub fn default_model_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("TRUEID_FACE_MODEL") {
         return Some(PathBuf::from(p));
     }
+
+    let system_path = PathBuf::from("/var/lib/trueid/models/face_embedding.onnx");
+    if system_path.exists() {
+        return Some(system_path);
+    }
+
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
+
     Some(base.join("trueid/models/face_embedding.onnx"))
 }
 

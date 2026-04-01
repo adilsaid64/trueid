@@ -375,11 +375,19 @@ pub fn default_detector_path() -> Option<std::path::PathBuf> {
     if let Ok(p) = std::env::var("TRUEID_FACE_DETECTOR_MODEL") {
         return Some(std::path::PathBuf::from(p));
     }
+
+    let system_path =
+        std::path::PathBuf::from("/var/lib/trueid/models/face_detection_yunet_2023mar.onnx");
+    if system_path.exists() {
+        return Some(system_path);
+    }
+
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| {
             std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
         })?;
+
     Some(base.join("trueid/models/face_detection_yunet_2023mar.onnx"))
 }
 

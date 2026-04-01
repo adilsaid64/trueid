@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use trueid_ipc::{Request, Response, send_request};
+mod models;
 
 #[cfg(unix)]
 fn current_uid() -> u32 {
@@ -37,6 +38,7 @@ enum Commands {
         #[arg(long)]
         uid: Option<u32>,
     },
+    GetModels,
 }
 
 fn main() {
@@ -123,6 +125,12 @@ fn main() {
                     eprintln!("failed to reach trueid-daemon: {e}");
                     std::process::exit(1);
                 }
+            }
+        }
+        Some(Commands::GetModels) => {
+            if let Err(e) = models::get_models() {
+                eprintln!("failed to install models: {e}");
+                std::process::exit(1);
             }
         }
         None => {
