@@ -44,11 +44,7 @@ fn template_dir() -> Result<PathBuf, StoreError> {
     if let Ok(dir) = std::env::var("TRUEID_TEMPLATE_DIR") {
         return Ok(PathBuf::from(dir));
     }
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .ok_or_else(|| StoreError::Failed("HOME unset (or set TRUEID_TEMPLATE_DIR)".into()))?;
-    Ok(base.join("trueid/templates"))
+    Ok(PathBuf::from("/var/lib/trueid/templates"))
 }
 
 fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), StoreError> {
