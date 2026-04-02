@@ -34,7 +34,7 @@ summary = "Biometric authentication daemon"
 assets = [
   { source = "../../target/release/trueid-daemon", dest = "/usr/bin/trueidd", mode = "755" },
   { source = "../../target/release/trueid-ctl", dest = "/usr/bin/trueid", mode = "755" },
-  { source = "../../target/release/libtrueid_pam.so", dest = "/usr/lib/security/pam_trueid.so", mode = "755" },
+  { source = "../../target/release/libtrueid_pam.so", dest = "/usr/lib64/security/pam_trueid.so", mode = "755" },
   { source = "../../packaging/trueid.service", dest = "/usr/lib/systemd/system/trueid.service", mode = "644" }
 ]
 
