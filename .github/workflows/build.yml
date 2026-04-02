@@ -127,7 +127,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: trueid-fedora-rpm
-          path: target/release/rpmbuild/RPMS/**/*.rpm
+          path: target/generate-rpm/*.rpm
 
   deploy:
     needs: [release, build-ubuntu, build-fedora]
