@@ -120,9 +120,9 @@ jobs:
           ref: ${{ needs.release.outputs.version }}
 
       - run: dnf install -y rust cargo gcc make openssl-devel clang clang-devel
-      - run: cargo install cargo-rpm --locked
+      - run: cargo install cargo-generate-rpm --locked
       - run: cargo build --workspace --release
-      - run: cd crates/trueid-daemon && cargo rpm build
+      - run: cargo generate-rpm -p crates/trueid-daemon
 
       - uses: actions/upload-artifact@v4
         with:

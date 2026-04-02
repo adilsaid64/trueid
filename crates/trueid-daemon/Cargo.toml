@@ -3,6 +3,7 @@ name = "trueid-daemon"
 version = "0.1.0"
 edition = "2024"
 description = "Biometric authentication daemon for TrueID"
+license = "MIT"
 
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
@@ -25,24 +26,17 @@ assets = [
     ["../../target/release/trueid-daemon", "usr/bin/trueidd", "755"],
     ["../../packaging/trueid.service", "lib/systemd/system/trueid.service", "644"],
 ]
-
-
-[package.metadata.rpm]
-package = "trueid"
+[package.metadata.generate-rpm]
+name = "trueid"
 summary = "Biometric authentication daemon"
-license = "MIT"
 
-[package.metadata.rpm.targets]
-trueid-daemon = { path = "target/release/trueid-daemon" }
-trueid-ctl = { path = "target/release/trueid-ctl" }
+assets = [
+  { source = "../../target/release/trueid-daemon", dest = "/usr/bin/trueidd", mode = "755" },
+  { source = "../../target/release/trueid-ctl", dest = "/usr/bin/trueid", mode = "755" },
+  { source = "../../packaging/trueid.service", dest = "/usr/lib/systemd/system/trueid.service", mode = "644" }
+]
 
-[package.metadata.rpm.assets]
-"../../target/release/trueid-ctl" = { path = "/usr/bin/trueid", mode = "755" }
-"../../target/release/trueid-daemon" = { path = "/usr/bin/trueidd", mode = "755" }
-"../../packaging/trueid.service" = { path = "/usr/lib/systemd/system/trueid.service", mode = "644" }
-
-[package.metadata.rpm.scripts]
-post_install = """
+post_install_script = """
 systemctl daemon-reexec || true
 systemctl daemon-reload || true
 systemctl enable trueid || true
