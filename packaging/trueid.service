@@ -5,6 +5,7 @@ After=network.target
 [Service]
 ExecStart=/usr/bin/trueidd
 Restart=always
+RuntimeDirectory=trueid
 
 [Install]
 WantedBy=multi-user.target
