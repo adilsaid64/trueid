@@ -118,9 +118,7 @@ fn main() -> std::io::Result<()> {
         adapters::FileTemplateStore::open_default()
             .map_err(|e| std::io::Error::other(e.to_string()))?,
     );
-    let match_threshold = config
-        .match_threshold
-        .unwrap_or_else(parse_match_threshold);
+    let match_threshold = config.match_threshold.unwrap_or_else(parse_match_threshold);
     let matcher = Arc::new(adapters::CosineMatcher::new(match_threshold));
 
     let detector: Arc<dyn FaceDetector> = if std::env::var("TRUEID_USE_MOCK_DETECTOR")
