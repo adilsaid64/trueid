@@ -22,23 +22,27 @@ maintainer = "Adil Said <adilsaid64@gmail.com>"
 depends = "$auto"
 
 assets = [
-    ["../../target/release/trueid-ctl", "usr/bin/trueid", "755"],
-    ["../../target/release/trueid-daemon", "usr/bin/trueidd", "755"],
+    ["../../target/release/trueid-ctl", "usr/bin/trueid-ctl", "755"],
+    ["../../target/release/trueid-daemon", "usr/bin/trueid-daemon", "755"],
     ["../../target/release/libtrueid_pam.so", "usr/lib/security/pam_trueid.so", "755"],
     ["../../packaging/trueid.service", "lib/systemd/system/trueid.service", "644"],
+    ["config/config.yaml", "/etc/trueid/config.yaml", "644"]
 ]
+
 [package.metadata.generate-rpm]
 name = "trueid"
 summary = "Biometric authentication daemon"
 
 assets = [
-  { source = "../../target/release/trueid-daemon", dest = "/usr/bin/trueidd", mode = "755" },
-  { source = "../../target/release/trueid-ctl", dest = "/usr/bin/trueid", mode = "755" },
+  { source = "../../target/release/trueid-daemon", dest = "/usr/bin/trueid-daemon", mode = "755" },
+  { source = "../../target/release/trueid-ctl", dest = "/usr/bin/trueid-ctl", mode = "755" },
   { source = "../../target/release/libtrueid_pam.so", dest = "/usr/lib64/security/pam_trueid.so", mode = "755" },
-  { source = "../../packaging/trueid.service", dest = "/usr/lib/systemd/system/trueid.service", mode = "644" }
+  { source = "../../packaging/trueid.service", dest = "/usr/lib/systemd/system/trueid.service", mode = "644" },
+  { source = "config/config.yaml", dest = "/etc/trueid/config.yaml", mode = "644" }
 ]
 
 post_install_script = """
+mkdir -p /etc/trueid
 systemctl daemon-reexec || true
 systemctl daemon-reload || true
 systemctl enable trueid || true

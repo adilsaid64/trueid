@@ -3,7 +3,7 @@ Description=TrueID Daemon
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/trueidd
+ExecStart=/usr/bin/trueid-daemon
 Restart=always
 RuntimeDirectory=trueid
 
