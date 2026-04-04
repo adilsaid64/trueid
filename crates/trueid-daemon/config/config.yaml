@@ -1,0 +1,4 @@
+rgb_camera_index: 0
+enable_ir: false
+ir_camera_index: 2
+match_threshold: 0.70
