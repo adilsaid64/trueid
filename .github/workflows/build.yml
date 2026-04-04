@@ -101,12 +101,21 @@ jobs:
 
       - run: cargo install cargo-deb --locked
       - run: cargo build --workspace --release
-      - run: cd crates/trueid-daemon && cargo deb
+      - run: |
+          cd crates/trueid-daemon
+          cargo deb
+
+          VERSION=${{ needs.release.outputs.version }}
+
+          FILE=$(ls ../../target/debian/*.deb | head -n 1)
+          NEW_NAME="trueid-daemon-${VERSION}-ubuntu.deb"
+
+          mv "$FILE" "../../target/debian/$NEW_NAME"
 
       - uses: actions/upload-artifact@v4
         with:
           name: trueid-ubuntu-deb
-          path: target/debian/*.deb
+          path: target/debian/trueid-daemon-*.deb
 
   build-fedora:
     needs: release
@@ -122,12 +131,20 @@ jobs:
       - run: dnf install -y rust cargo gcc make openssl-devel clang clang-devel
       - run: cargo install cargo-generate-rpm --locked
       - run: cargo build --workspace --release
-      - run: cargo generate-rpm -p crates/trueid-daemon
+      - run: |
+          cargo generate-rpm -p crates/trueid-daemon
+
+          VERSION=${{ needs.release.outputs.version }}
+
+          FILE=$(ls target/generate-rpm/*.rpm | head -n 1)
+          NEW_NAME="trueid-daemon-${VERSION}-fedora.rpm"
+
+          mv "$FILE" "target/generate-rpm/$NEW_NAME"
 
       - uses: actions/upload-artifact@v4
         with:
           name: trueid-fedora-rpm
-          path: target/generate-rpm/*.rpm
+          path: target/generate-rpm/trueid-daemon-*.rpm
 
   deploy:
     needs: [release, build-ubuntu, build-fedora]
