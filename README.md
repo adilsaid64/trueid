@@ -13,15 +13,15 @@ Still a WIP :) and open to contributions
 ### Ubuntu / Debian
 
 ```bash
-wget https://github.com/adilsaid64/trueid/releases/latest/download/trueid.deb
-sudo dpkg -i trueid.deb
+wget https://github.com/adilsaid64/trueid/releases/latest/download/trueid-*-ubuntu.deb
+sudo dpkg -i trueid-*-ubuntu.deb
 ```
 
 ### Fedora
 
 ```bash
-wget https://github.com/adilsaid64/trueid/releases/latest/download/trueid.rpm
-sudo dnf install ./trueid.rpm
+wget https://github.com/adilsaid64/trueid/releases/latest/download/trueid-*-fedora.rpm
+sudo dnf install ./trueid-*-fedora.rpm
 ```
 
 ### Build from source

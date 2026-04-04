@@ -108,14 +108,14 @@ jobs:
           VERSION=${{ needs.release.outputs.version }}
 
           FILE=$(ls ../../target/debian/*.deb | head -n 1)
-          NEW_NAME="trueid-daemon-${VERSION}-ubuntu.deb"
+          NEW_NAME="trueid-${VERSION}-ubuntu.deb"
 
           mv "$FILE" "../../target/debian/$NEW_NAME"
 
       - uses: actions/upload-artifact@v4
         with:
           name: trueid-ubuntu-deb
-          path: target/debian/trueid-daemon-*.deb
+          path: target/debian/trueid-*.deb
 
   build-fedora:
     needs: release
@@ -137,14 +137,14 @@ jobs:
           VERSION=${{ needs.release.outputs.version }}
 
           FILE=$(ls target/generate-rpm/*.rpm | head -n 1)
-          NEW_NAME="trueid-daemon-${VERSION}-fedora.rpm"
+          NEW_NAME="trueid-${VERSION}-fedora.rpm"
 
           mv "$FILE" "target/generate-rpm/$NEW_NAME"
 
       - uses: actions/upload-artifact@v4
         with:
           name: trueid-fedora-rpm
-          path: target/generate-rpm/trueid-daemon-*.rpm
+          path: target/generate-rpm/trueid-*.rpm
 
   deploy:
     needs: [release, build-ubuntu, build-fedora]
