@@ -7,8 +7,8 @@ use trueid_core::{Embedding, MultiFramePolicy, StreamModality, TrueIdApp, TrueId
 use trueid_ipc::SOCKET_PATH;
 
 mod adapters;
-mod ipc;
 mod config;
+mod ipc;
 
 // `/dev/video{N}` when `TRUEID_CAMERA_INDEX` unset.
 const DEFAULT_RGB_CAMERA_INDEX: u32 = 0;
@@ -76,8 +76,7 @@ fn main() -> std::io::Result<()> {
         };
 
     let video_ir: Option<Arc<dyn trueid_core::ports::VideoSource>> =
-        if config.enable_ir.unwrap_or(false)
-        {
+        if config.enable_ir.unwrap_or(false) {
             if std::env::var("TRUEID_USE_MOCK_VIDEO_SOURCE")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false)
@@ -119,7 +118,9 @@ fn main() -> std::io::Result<()> {
         adapters::FileTemplateStore::open_default()
             .map_err(|e| std::io::Error::other(e.to_string()))?,
     );
-    let match_threshold = config.match_threshold.unwrap_or_else(|| parse_match_threshold());
+    let match_threshold = config
+        .match_threshold
+        .unwrap_or_else(parse_match_threshold);
     let matcher = Arc::new(adapters::CosineMatcher::new(match_threshold));
 
     let detector: Arc<dyn FaceDetector> = if std::env::var("TRUEID_USE_MOCK_DETECTOR")
