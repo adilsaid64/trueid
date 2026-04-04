@@ -34,7 +34,8 @@ fn template_quorum_required(template_count: usize) -> usize {
 /// Wired dependencies for [`TrueIdApp`].
 pub struct TrueIdAppDeps {
     pub health: Arc<dyn Health>,
-    pub video: Arc<dyn VideoSource>,
+    pub video_rgb: Arc<dyn VideoSource>,
+    pub video_ir: Option<Arc<dyn VideoSource>>,
     pub detector: Arc<dyn FaceDetector>,
     pub aligner: Arc<dyn FaceAligner>,
     pub liveness: Arc<dyn LivenessChecker>,
@@ -46,7 +47,8 @@ pub struct TrueIdAppDeps {
 
 pub struct TrueIdApp {
     health: Arc<dyn Health>,
-    video: Arc<dyn VideoSource>,
+    video_rgb: Arc<dyn VideoSource>,
+    video_ir: Option<Arc<dyn VideoSource>>,
     detector: Arc<dyn FaceDetector>,
     aligner: Arc<dyn FaceAligner>,
     liveness: Arc<dyn LivenessChecker>,
@@ -60,7 +62,8 @@ impl TrueIdApp {
     pub fn new(deps: TrueIdAppDeps) -> Self {
         Self {
             health: deps.health,
-            video: deps.video,
+            video_rgb: deps.video_rgb,
+            video_ir: deps.video_ir,
             detector: deps.detector,
             aligner: deps.aligner,
             liveness: deps.liveness,
@@ -150,9 +153,15 @@ impl TrueIdApp {
         );
 
         let t_cap = Instant::now();
-        let frames = self.video.capture(spec)?;
+        let frames_rgb = self.video_rgb.capture(spec)?;
+
+        if let Some(ir) = &self.video_ir {
+            tracing::debug!("verify: IR source available (not yet used)");
+            let _ = ir.capture(spec)?; // TODO: make use of IR frames
+        }
+
         tracing::info!(
-            returned = frames.len(),
+            returned = frames_rgb.len(),
             capture_ms = t_cap.elapsed().as_millis(),
             "verify: frames from camera"
         );
@@ -175,7 +184,7 @@ impl TrueIdApp {
 
         let t_loop = Instant::now();
 
-        for (i, frame) in frames.iter().enumerate() {
+        for (i, frame) in frames_rgb.iter().enumerate() {
             let Some(probe) = self.try_embed_from_frame(frame)? else {
                 tracing::debug!(frame_index = i, "verify: frame produced no embedding");
                 continue;
@@ -271,7 +280,7 @@ impl TrueIdApp {
         );
 
         let t_cap = Instant::now();
-        let frames = self.video.capture(spec)?;
+        let frames = self.video_rgb.capture(spec)?;
         tracing::info!(
             returned = frames.len(),
             capture_ms = t_cap.elapsed().as_millis(),
@@ -337,7 +346,7 @@ impl TrueIdApp {
         );
 
         let t_cap = Instant::now();
-        let frames = self.video.capture(spec)?;
+        let frames = self.video_rgb.capture(spec)?;
         tracing::info!(
             returned = frames.len(),
             capture_ms = t_cap.elapsed().as_millis(),
@@ -512,7 +521,8 @@ mod tests {
         let template_store: Arc<dyn TemplateStore> = store;
         TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(OkHealth),
-            video: Arc::new(TestFrame),
+            video_rgb: Arc::new(TestFrame),
+            video_ir: None,
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
@@ -544,7 +554,8 @@ mod tests {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(BadHealth),
-            video: Arc::new(TestFrame),
+            video_rgb: Arc::new(TestFrame),
+            video_ir: None,
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
@@ -680,7 +691,8 @@ mod tests {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(OkHealth),
-            video: Arc::new(TestFrame),
+            video_rgb: Arc::new(TestFrame),
+            video_ir: None,
             detector: Arc::new(NoFaceDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
@@ -703,7 +715,8 @@ mod tests {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(BadHealth),
-            video: Arc::new(TestFrame),
+            video_rgb: Arc::new(TestFrame),
+            video_ir: None,
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
