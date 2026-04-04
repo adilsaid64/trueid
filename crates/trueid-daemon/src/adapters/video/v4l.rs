@@ -37,7 +37,12 @@ impl V4lVideoSource {
     ///
     /// Opens the device briefly to validate it, then closes it so nothing holds the camera until
     /// the next [`VideoSource::capture`].
-    pub fn open_with_dimensions(index: u32, width: u32, height: u32, modality: StreamModality) -> Result<Self, CaptureError> {
+    pub fn open_with_dimensions(
+        index: u32,
+        width: u32,
+        height: u32,
+        modality: StreamModality,
+    ) -> Result<Self, CaptureError> {
         let dev = Device::new(index as usize).map_err(io_to_capture)?;
         let _active = negotiate_format(&dev, width, height, modality)?;
         let _stream =
@@ -56,18 +61,21 @@ impl V4lVideoSource {
     }
 }
 
-fn negotiate_format(dev: &Device, width: u32, height: u32, modality: StreamModality) -> Result<Format, CaptureError> {
+fn negotiate_format(
+    dev: &Device,
+    width: u32,
+    height: u32,
+    modality: StreamModality,
+) -> Result<Format, CaptureError> {
     (match modality {
-        StreamModality::Rgb => {
-            dev.set_format(&Format::new(width, height, FourCC::new(b"MJPG")))
+        StreamModality::Rgb => dev
+            .set_format(&Format::new(width, height, FourCC::new(b"MJPG")))
             .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"YUYV"))))
             .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"GREY"))))
-            .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"Y800"))))
-        }
-        StreamModality::Ir => {
-            dev.set_format(&Format::new(width, height, FourCC::new(b"GREY")))
-                .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"Y800"))))
-        }  
+            .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"Y800")))),
+        StreamModality::Ir => dev
+            .set_format(&Format::new(width, height, FourCC::new(b"GREY")))
+            .or_else(|_| dev.set_format(&Format::new(width, height, FourCC::new(b"Y800")))),
     })
     .map_err(io_to_capture)
 }
@@ -128,7 +136,7 @@ fn decode_payload(
             fourcc.str().unwrap_or("?")
         )));
     };
-    let (bytes,w, h ) = apply_optional_sensor_fix(bytes, w, h, skip_env_sensor_fix)?;
+    let (bytes, w, h) = apply_optional_sensor_fix(bytes, w, h, skip_env_sensor_fix)?;
     Ok((bytes, w, h, PixelFormat::Rgb8))
 }
 
@@ -339,7 +347,8 @@ impl VideoSource for V4lVideoSource {
 
         let mut frames = Vec::with_capacity(keep);
         for raw in raws {
-            let (bytes, fw, fh, format) = decode_payload(&fourcc, &raw, width, height, self.modality)?;
+            let (bytes, fw, fh, format) =
+                decode_payload(&fourcc, &raw, width, height, self.modality)?;
             frames.push(Frame {
                 modality: self.modality,
                 width: fw,

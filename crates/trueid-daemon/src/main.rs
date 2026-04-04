@@ -59,14 +59,18 @@ fn main() -> std::io::Result<()> {
             let cap_w = parse_u32_env_positive("TRUEID_CAPTURE_WIDTH", 640);
             let cap_h = parse_u32_env_positive("TRUEID_CAPTURE_HEIGHT", 480);
             Arc::new(
-                adapters::V4lVideoSource::open_with_dimensions(index, cap_w, cap_h, StreamModality::Rgb).map_err(
-                    |e| {
-                        std::io::Error::other(format!(
-                            "camera open failed (index {index}): {e}. \
+                adapters::V4lVideoSource::open_with_dimensions(
+                    index,
+                    cap_w,
+                    cap_h,
+                    StreamModality::Rgb,
+                )
+                .map_err(|e| {
+                    std::io::Error::other(format!(
+                        "camera open failed (index {index}): {e}. \
                      Set TRUEID_USE_MOCK_VIDEO_SOURCE=1 to run without a device."
-                        ))
-                    },
-                )?,
+                    ))
+                })?,
             )
         };
     let face_embedder: Arc<dyn FaceEmbedder> = if std::env::var("TRUEID_USE_MOCK_EMBEDDER")
