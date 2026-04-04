@@ -8,6 +8,7 @@ use trueid_ipc::SOCKET_PATH;
 
 mod adapters;
 mod ipc;
+mod config;
 
 // `/dev/video{N}` when `TRUEID_CAMERA_INDEX` unset.
 const DEFAULT_RGB_CAMERA_INDEX: u32 = 0;
@@ -45,6 +46,8 @@ fn main() -> std::io::Result<()> {
         fs::remove_file(SOCKET_PATH)?;
     }
 
+    let config = config::load_config();
+
     let health = Arc::new(adapters::DefaultHealth);
     let video_rgb: Arc<dyn trueid_core::ports::VideoSource> =
         if std::env::var("TRUEID_USE_MOCK_VIDEO_SOURCE")
@@ -53,10 +56,7 @@ fn main() -> std::io::Result<()> {
         {
             Arc::new(adapters::MockVideoSource::default_gray())
         } else {
-            let index: u32 = std::env::var("TRUEID_CAMERA_INDEX")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(DEFAULT_RGB_CAMERA_INDEX);
+            let index: u32 = config.rgb_camera_index.unwrap_or(DEFAULT_RGB_CAMERA_INDEX);
             let cap_w = parse_u32_env_positive("TRUEID_CAPTURE_WIDTH", 640);
             let cap_h = parse_u32_env_positive("TRUEID_CAPTURE_HEIGHT", 480);
             Arc::new(
@@ -76,9 +76,7 @@ fn main() -> std::io::Result<()> {
         };
 
     let video_ir: Option<Arc<dyn trueid_core::ports::VideoSource>> =
-        if std::env::var("TRUEID_ENABLE_IR")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
+        if config.enable_ir.unwrap_or(false)
         {
             if std::env::var("TRUEID_USE_MOCK_VIDEO_SOURCE")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -86,10 +84,7 @@ fn main() -> std::io::Result<()> {
             {
                 Some(Arc::new(adapters::MockVideoSource::default_gray()))
             } else {
-                let index: u32 = std::env::var("TRUEID_IR_CAMERA_INDEX")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(DEFAULT_IR_CAMERA_INDEX);
+                let index: u32 = config.ir_camera_index.unwrap_or(DEFAULT_IR_CAMERA_INDEX);
 
                 let cap_w = parse_u32_env_positive("TRUEID_CAPTURE_WIDTH", 640);
                 let cap_h = parse_u32_env_positive("TRUEID_CAPTURE_HEIGHT", 480);
@@ -124,7 +119,8 @@ fn main() -> std::io::Result<()> {
         adapters::FileTemplateStore::open_default()
             .map_err(|e| std::io::Error::other(e.to_string()))?,
     );
-    let matcher = Arc::new(adapters::CosineMatcher::new(parse_match_threshold()));
+    let match_threshold = config.match_threshold.unwrap_or_else(|| parse_match_threshold());
+    let matcher = Arc::new(adapters::CosineMatcher::new(match_threshold));
 
     let detector: Arc<dyn FaceDetector> = if std::env::var("TRUEID_USE_MOCK_DETECTOR")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
