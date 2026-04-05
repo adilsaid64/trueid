@@ -78,7 +78,9 @@ fn main() -> std::io::Result<()> {
                 })?,
             )
         };
-        Arc::new(adapters::ParallelRgbIrCameraCapture::new(video_rgb, video_ir))
+        Arc::new(adapters::ParallelRgbIrCameraCapture::new(
+            video_rgb, video_ir,
+        ))
     } else {
         Arc::new(adapters::RgbOnlyCameraCapture::new(video_rgb))
     };

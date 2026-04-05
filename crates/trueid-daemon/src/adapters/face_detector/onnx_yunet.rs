@@ -371,7 +371,9 @@ impl FaceDetector for OnnxYuNetDetector {
 }
 
 /// Load YuNet ONNX from `model_path` (see `config.yaml` → `models.face_detector`).
-pub fn build_face_detector(model_path: &std::path::Path) -> Result<std::sync::Arc<dyn FaceDetector>, String> {
+pub fn build_face_detector(
+    model_path: &std::path::Path,
+) -> Result<std::sync::Arc<dyn FaceDetector>, String> {
     if !model_path.exists() {
         return Err(format!(
             "face detector ONNX not found at {}.\n\

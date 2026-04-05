@@ -338,14 +338,8 @@ impl VideoSource for V4lVideoSource {
 
         let mut frames = Vec::with_capacity(keep);
         for raw in raws {
-            let (bytes, fw, fh, format) = decode_payload(
-                &fourcc,
-                &raw,
-                width,
-                height,
-                self.modality,
-                self.pixel_fix,
-            )?;
+            let (bytes, fw, fh, format) =
+                decode_payload(&fourcc, &raw, width, height, self.modality, self.pixel_fix)?;
             frames.push(Frame {
                 modality: self.modality,
                 width: fw,
