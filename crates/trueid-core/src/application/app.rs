@@ -390,7 +390,7 @@ mod tests {
         BoundingBox, Embedding, FaceDetection, Frame, PixelFormat, StreamModality,
     };
     use crate::ports::{
-        AlignError, CameraCapture, CapturedBurst, CaptureError, CaptureSpec, DetectError,
+        AlignError, CameraCapture, CaptureError, CaptureSpec, CapturedBurst, DetectError,
         EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedError, FaceEmbedder, Health,
         HealthStatus, LivenessChecker, LivenessError, StoreError, TemplateStore,
     };

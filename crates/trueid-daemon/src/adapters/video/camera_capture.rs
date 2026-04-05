@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::thread;
 
-use trueid_core::ports::{CameraCapture, CapturedBurst, CaptureError, CaptureSpec, VideoSource};
+use trueid_core::ports::{CameraCapture, CaptureError, CaptureSpec, CapturedBurst, VideoSource};
 
 pub struct RgbOnlyCameraCapture {
     rgb: Arc<dyn VideoSource>,

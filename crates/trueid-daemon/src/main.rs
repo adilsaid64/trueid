@@ -63,13 +63,18 @@ fn main() -> std::io::Result<()> {
     } else {
         let index = config.rgb_camera_index.unwrap_or(DEFAULT_RGB_CAMERA_INDEX);
         Arc::new(
-            adapters::V4lVideoSource::open_with_dimensions(index, cap_w, cap_h, StreamModality::Rgb)
-                .map_err(|e| {
-                    std::io::Error::other(format!(
-                        "camera open failed (index {index}): {e}. \
+            adapters::V4lVideoSource::open_with_dimensions(
+                index,
+                cap_w,
+                cap_h,
+                StreamModality::Rgb,
+            )
+            .map_err(|e| {
+                std::io::Error::other(format!(
+                    "camera open failed (index {index}): {e}. \
                          Set TRUEID_USE_MOCK_VIDEO_SOURCE=1 to run without a device."
-                    ))
-                })?,
+                ))
+            })?,
         )
     };
 
@@ -90,7 +95,9 @@ fn main() -> std::io::Result<()> {
                 })?,
             )
         };
-        Arc::new(adapters::ParallelRgbIrCameraCapture::new(video_rgb, video_ir))
+        Arc::new(adapters::ParallelRgbIrCameraCapture::new(
+            video_rgb, video_ir,
+        ))
     } else {
         Arc::new(adapters::RgbOnlyCameraCapture::new(video_rgb))
     };

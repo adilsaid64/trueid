@@ -10,6 +10,6 @@ pub use domain::{
     StreamModality, UserId,
 };
 pub use ports::{
-    AlignError, CameraCapture, CapturedBurst, CaptureSpec, DetectError, FaceAligner, FaceDetector,
+    AlignError, CameraCapture, CaptureSpec, CapturedBurst, DetectError, FaceAligner, FaceDetector,
     FaceEmbedError, FaceEmbedder, LivenessChecker, LivenessError,
 };
