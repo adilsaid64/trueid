@@ -27,6 +27,7 @@ paths:
 verification:
   match_threshold: 0.70
   fusion:
+    # only used when both rgb and ir templates exist
     weight_rgb: 0.30
     weight_ir: 0.70
     fusion_threshold: 0.5
