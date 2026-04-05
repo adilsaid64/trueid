@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use trueid_core::ports::{FaceAligner, FaceDetector, FaceEmbedder};
 use trueid_core::{
-    CameraCapture, Embedding, MultiFramePolicy, StreamModality, TrueIdApp, TrueIdAppDeps,
+    CameraCapture, Embedding, ModalityFusionConfig, MultiFramePolicy, StreamModality, TrueIdApp,
+    TrueIdAppDeps,
 };
 use trueid_ipc::SOCKET_PATH;
 
@@ -131,6 +132,12 @@ fn main() -> std::io::Result<()> {
     };
     let liveness = Arc::new(adapters::AlwaysLiveLiveness);
 
+    let modality_fusion = ModalityFusionConfig {
+        weight_rgb: cfg.verification.fusion.weight_rgb,
+        weight_ir: cfg.verification.fusion.weight_ir,
+        fusion_threshold: cfg.verification.fusion.fusion_threshold,
+    };
+
     let app = Arc::new(TrueIdApp::new(TrueIdAppDeps {
         health,
         camera,
@@ -141,6 +148,7 @@ fn main() -> std::io::Result<()> {
         template_store,
         matcher,
         capture: MultiFramePolicy::default(),
+        modality_fusion,
     }));
 
     ipc::run_unix_socket(SOCKET_PATH, app)

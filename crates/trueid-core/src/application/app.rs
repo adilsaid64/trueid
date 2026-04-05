@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::domain::{Embedding, Frame, UserId};
+use crate::domain::{Embedding, Frame, TemplateBundle, UserId};
 use crate::ports::{
     CameraCapture, CaptureSpec, EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedder, Health,
     HealthStatus, LivenessChecker, LivenessError, TemplateStore,
@@ -25,6 +25,28 @@ impl Default for MultiFramePolicy {
     }
 }
 
+/// Weights and threshold for RGB+IR verify when both modalities are enrolled.
+///
+/// When both bursts have embeddings: **hard accept** if RGB and IR each met template quorum on some frame;
+/// otherwise accept if `weight_rgb * sim_rgb + weight_ir * sim_ir >= fusion_threshold` using max
+/// best-template similarity per modality (clamped to \[0, 1\]), not inflated to 1.0 when quorum is met.
+#[derive(Debug, Clone, Copy)]
+pub struct ModalityFusionConfig {
+    pub weight_rgb: f32,
+    pub weight_ir: f32,
+    pub fusion_threshold: f32,
+}
+
+impl Default for ModalityFusionConfig {
+    fn default() -> Self {
+        Self {
+            weight_rgb: 0.45,
+            weight_ir: 0.55,
+            fusion_threshold: 0.5,
+        }
+    }
+}
+
 /// Minimum number of templates that must match a single probe for that frame to count toward verify.
 /// This is ceil(n/2): e.g. 1→1, 2→1, 3→2, 4→2 (at least 50% of templates).
 fn template_quorum_required(template_count: usize) -> usize {
@@ -42,6 +64,7 @@ pub struct TrueIdAppDeps {
     pub template_store: Arc<dyn TemplateStore>,
     pub matcher: Arc<dyn EmbeddingMatcher>,
     pub capture: MultiFramePolicy,
+    pub modality_fusion: ModalityFusionConfig,
 }
 
 pub struct TrueIdApp {
@@ -54,6 +77,7 @@ pub struct TrueIdApp {
     template_store: Arc<dyn TemplateStore>,
     matcher: Arc<dyn EmbeddingMatcher>,
     capture: MultiFramePolicy,
+    modality_fusion: ModalityFusionConfig,
 }
 
 impl TrueIdApp {
@@ -68,6 +92,7 @@ impl TrueIdApp {
             template_store: deps.template_store,
             matcher: deps.matcher,
             capture: deps.capture,
+            modality_fusion: deps.modality_fusion,
         }
     }
 
@@ -126,6 +151,111 @@ impl TrueIdApp {
         Ok(Some(emb))
     }
 
+    /// Best similarity vs templates and whether template quorum is met for this modality.
+    fn evaluate_probe_vs_templates(
+        &self,
+        probe: Option<&Embedding>,
+        templates: &[Embedding],
+    ) -> (f32, bool) {
+        let Some(p) = probe else {
+            return (0.0, false);
+        };
+        if templates.is_empty() {
+            return (0.0, false);
+        }
+        let required = template_quorum_required(templates.len());
+        let mut pass_count = 0usize;
+        let mut best_sim = 0.0f32;
+        for t in templates {
+            if let Some(s) = self.matcher.similarity(p, t) {
+                best_sim = best_sim.max(s);
+            }
+            if self.matcher.matches(p, t) {
+                pass_count += 1;
+            }
+        }
+        let quorum = pass_count >= required;
+        (best_sim, quorum)
+    }
+
+    /// Per-modality summary over a burst: max best-template similarity and whether **any** frame met quorum.
+    /// Does not pair RGB with IR by frame index.
+    fn aggregate_modality_for_verify(
+        &self,
+        probes: &[Option<Embedding>],
+        templates: &[Embedding],
+    ) -> (f32, bool) {
+        let mut any_quorum = false;
+        let mut max_best_sim = 0.0f32;
+        for p in probes {
+            let (sim, q) = self.evaluate_probe_vs_templates(p.as_ref(), templates);
+            max_best_sim = max_best_sim.max(sim);
+            any_quorum |= q;
+        }
+        (max_best_sim, any_quorum)
+    }
+
+    /// RGB-only, IR-only, or weighted fusion using **burst-level** aggregates (not per-frame RGB/IR pairs).
+    /// When both modalities are in play: hard accept only if **both** hit quorum; else fuse **raw** max
+    /// similarities (quorum does not map to 1.0). If one modality has no embeddings, falls back to the other.
+    fn fused_match_from_aggregates(
+        &self,
+        bundle: &TemplateBundle,
+        (sim_r, q_r): (f32, bool),
+        (sim_i, q_i): (f32, bool),
+        has_r: bool,
+        has_i: bool,
+    ) -> bool {
+        let fusion = self.modality_fusion;
+
+        if bundle.ir.is_empty() {
+            return q_r;
+        }
+        if bundle.rgb.is_empty() {
+            return q_i;
+        }
+
+        if !has_r && !has_i {
+            return false;
+        }
+        if !has_r && has_i {
+            return q_i;
+        }
+        if has_r && !has_i {
+            return q_r;
+        }
+
+        if q_r && q_i {
+            return true;
+        }
+
+        let sr = sim_r.clamp(0.0, 1.0);
+        let si = sim_i.clamp(0.0, 1.0);
+        fusion.weight_rgb * sr + fusion.weight_ir * si >= fusion.fusion_threshold
+    }
+
+    /// Detect → align → liveness → embed for each frame in one modality.
+    /// Verify combines streams using burst aggregates, not RGB[i] with IR[i].
+    fn modality_probes_from_frames(
+        &self,
+        frames: &[Frame],
+        log_ctx: &'static str,
+    ) -> Result<Vec<Option<Embedding>>, AppError> {
+        let mut out = Vec::with_capacity(frames.len());
+        for (i, frame) in frames.iter().enumerate() {
+            let emb = self.try_embed_from_frame(frame)?;
+            if emb.is_none() {
+                tracing::debug!(
+                    frame_index = i,
+                    ctx = log_ctx,
+                    "verify: modality frame produced no embedding"
+                );
+            }
+            out.push(emb);
+        }
+        Ok(out)
+    }
+
     pub fn ping(&self) -> Result<(), AppError> {
         match self.health.status() {
             HealthStatus::Healthy => Ok(()),
@@ -158,94 +288,119 @@ impl TrueIdApp {
             "verify: frames from camera"
         );
         let frames_rgb = burst.rgb;
+        let frames_ir = burst.ir;
 
-        let Some(templates) = self.template_store.load_all(user)? else {
+        let Some(bundle) = self.template_store.load_all(user)? else {
             return Err(crate::domain::error::DomainError::NoEnrolledTemplate.into());
         };
-        if templates.is_empty() {
+        if !bundle.has_rgb_enrollment() {
             return Err(crate::domain::error::DomainError::NoEnrolledTemplate.into());
         }
-        let template_count = templates.len();
-        let required_matches = template_quorum_required(template_count);
+        let n_rgb = bundle.rgb.len();
+        let n_ir = bundle.ir.len();
+        let req_rgb = template_quorum_required(n_rgb);
+        let req_ir = if n_ir > 0 {
+            template_quorum_required(n_ir)
+        } else {
+            0
+        };
         tracing::info!(
-            template_count,
-            required_matches,
-            quorum = "≥50% of templates must match this probe",
-            template_dim = templates[0].0.len(),
+            rgb_templates = n_rgb,
+            ir_templates = n_ir,
+            rgb_quorum = req_rgb,
+            ir_quorum = req_ir,
+            fusion = ?self.modality_fusion,
+            template_dim = bundle.rgb[0].0.len(),
             "verify: templates loaded"
         );
 
-        let t_loop = Instant::now();
+        let t_rgb = Instant::now();
+        let probes_rgb = self.modality_probes_from_frames(&frames_rgb, "verify_rgb")?;
+        tracing::info!(
+            frames = probes_rgb.len(),
+            with_embedding = probes_rgb.iter().filter(|p| p.is_some()).count(),
+            elapsed_ms = t_rgb.elapsed().as_millis(),
+            "verify: RGB burst processed"
+        );
 
-        for (i, frame) in frames_rgb.iter().enumerate() {
-            let Some(probe) = self.try_embed_from_frame(frame)? else {
-                tracing::debug!(frame_index = i, "verify: frame produced no embedding");
-                continue;
-            };
-
-            let mut pass_count: usize = 0;
-            let mut best_similarity: Option<f32> = None;
-            for (ti, t) in templates.iter().enumerate() {
-                let similarity = self.matcher.similarity(&probe, t);
-                if let Some(s) = similarity {
-                    best_similarity = Some(match best_similarity {
-                        None => s,
-                        Some(prev) => prev.max(s),
-                    });
-                }
-                let passed = self.matcher.matches(&probe, t);
-                if passed {
-                    pass_count += 1;
-                    tracing::debug!(
-                        frame_index = i,
-                        template_index = ti,
-                        ?similarity,
-                        "verify: template matched probe"
-                    );
-                } else {
-                    tracing::info!(
-                        frame_index = i,
-                        template_index = ti,
-                        ?similarity,
-                        "verify: template did not match probe"
-                    );
-                }
-            }
-
-            let frame_accepted = pass_count >= required_matches;
-            let probe_summary = probe.summary();
+        let probes_ir = if let Some(ref ir_frames) = frames_ir {
+            let t_ir = Instant::now();
+            let p = self.modality_probes_from_frames(ir_frames, "verify_ir")?;
             tracing::info!(
-                frame_index = i,
-                pass_count,
-                required_matches,
-                template_count,
-                frame_accepted,
-                best_similarity = ?best_similarity,
-                probe_min = probe_summary.min,
-                probe_max = probe_summary.max,
-                probe_mean = probe_summary.mean,
-                probe_l2 = probe_summary.l2_norm,
-                elapsed_ms = t_loop.elapsed().as_millis(),
-                "verify: quorum result for frame"
+                frames = p.len(),
+                with_embedding = p.iter().filter(|x| x.is_some()).count(),
+                elapsed_ms = t_ir.elapsed().as_millis(),
+                "verify: IR burst processed"
             );
+            Some(p)
+        } else {
+            None
+        };
 
-            if frame_accepted {
-                tracing::info!(
-                    total_ms = t_loop.elapsed().as_millis(),
-                    pass_count,
-                    required_matches,
-                    "verify: accepted (quorum met on this frame)"
-                );
-                return Ok(true);
-            }
+        let t_fuse = Instant::now();
+        let agg_rgb = self.aggregate_modality_for_verify(&probes_rgb, &bundle.rgb);
+        let agg_ir = match probes_ir.as_deref() {
+            Some(ir) if !ir.is_empty() => self.aggregate_modality_for_verify(ir, &bundle.ir),
+            _ => (0.0f32, false),
+        };
+        let has_rgb_probe = probes_rgb.iter().any(|p| p.is_some());
+        let has_ir_probe = probes_ir
+            .as_ref()
+            .is_some_and(|v| v.iter().any(|p| p.is_some()));
+
+        let accepted =
+            self.fused_match_from_aggregates(&bundle, agg_rgb, agg_ir, has_rgb_probe, has_ir_probe);
+
+        tracing::info!(
+            accepted,
+            rgb_quorum = agg_rgb.1,
+            ir_quorum = agg_ir.1,
+            best_sim_rgb = agg_rgb.0,
+            best_sim_ir = agg_ir.0,
+            has_rgb_probe,
+            has_ir_probe,
+            elapsed_ms = t_fuse.elapsed().as_millis(),
+            "verify: fusion (burst-level aggregates)"
+        );
+
+        if accepted {
+            tracing::info!(
+                total_ms = t_fuse.elapsed().as_millis(),
+                "verify: accepted after fusion"
+            );
+            return Ok(true);
         }
         tracing::info!(
-            total_ms = t_loop.elapsed().as_millis(),
-            required_matches,
-            template_count,
-            "verify: rejected (no frame met template quorum)"
+            total_ms = t_fuse.elapsed().as_millis(),
+            rgb_templates = n_rgb,
+            ir_templates = n_ir,
+            "verify: rejected (burst fusion / quorum)"
         );
         Ok(false)
+    }
+
+    fn collect_embeddings(
+        &self,
+        frames: &[Frame],
+        log_ctx: &'static str,
+    ) -> Result<Vec<Embedding>, AppError> {
+        let mut embeddings = Vec::with_capacity(frames.len());
+
+        for (i, frame) in frames.iter().enumerate() {
+            if let Some(e) = self.try_embed_from_frame(frame)? {
+                tracing::debug!(
+                    frame_index = i,
+                    dim = e.0.len(),
+                    ctx = log_ctx,
+                    "capture: frame contributed embedding"
+                );
+                embeddings.push(e);
+            } else {
+                tracing::debug!(frame_index = i, ctx = log_ctx, "capture: frame skipped");
+            }
+        }
+
+        Ok(embeddings)
     }
 
     pub fn enroll(&self, user: &UserId) -> Result<(), AppError> {
@@ -260,7 +415,7 @@ impl TrueIdApp {
         if self
             .template_store
             .load_all(user)?
-            .is_some_and(|t| !t.is_empty())
+            .is_some_and(|b| b.has_rgb_enrollment())
         {
             return Err(crate::domain::error::DomainError::AlreadyEnrolled.into());
         }
@@ -280,34 +435,45 @@ impl TrueIdApp {
             capture_ms = t_cap.elapsed().as_millis(),
             "enroll: frames from camera"
         );
-        let frames = burst.rgb;
+        let frames_rgb = burst.rgb;
+        let frames_ir = burst.ir;
 
-        let mut embeddings = Vec::with_capacity(frames.len());
-        for (i, frame) in frames.iter().enumerate() {
-            if let Some(e) = self.try_embed_from_frame(frame)? {
-                tracing::debug!(
-                    frame_index = i,
-                    dim = e.0.len(),
-                    "enroll: frame contributed embedding"
-                );
-                embeddings.push(e);
-            } else {
-                tracing::debug!(frame_index = i, "enroll: frame skipped");
-            }
-        }
-        if embeddings.is_empty() {
-            tracing::warn!("enroll: no usable embeddings from any frame");
+        let embeddings_rgb = self.collect_embeddings(&frames_rgb, "enroll")?;
+        let embeddings_ir = if let Some(ref ir) = frames_ir {
+            self.collect_embeddings(ir, "enroll_ir")?
+        } else {
+            Vec::new()
+        };
+
+        if embeddings_rgb.is_empty() {
+            tracing::warn!("enroll: no usable RGB embeddings from any frame");
             return Err(crate::domain::error::DomainError::NoUsableFaceInCapture.into());
         }
-        let template = crate::domain::Embedding::try_average(&embeddings)
+
+        let template_rgb = crate::domain::Embedding::try_average(&embeddings_rgb)
             .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
+        let template_ir = if embeddings_ir.is_empty() {
+            None
+        } else {
+            Some(
+                crate::domain::Embedding::try_average(&embeddings_ir)
+                    .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?,
+            )
+        };
+
         tracing::info!(
-            from_frames = embeddings.len(),
-            template_dim = template.0.len(),
-            "enroll: template averaged"
+            from_rgb_frames = embeddings_rgb.len(),
+            from_ir_frames = embeddings_ir.len(),
+            template_dim = template_rgb.0.len(),
+            has_ir_template = template_ir.is_some(),
+            "enroll: templates averaged"
         );
-        self.template_store
-            .save_all(user, std::slice::from_ref(&template))?;
+
+        let bundle = TemplateBundle {
+            rgb: vec![template_rgb],
+            ir: template_ir.into_iter().collect(),
+        };
+        self.template_store.save_all(user, &bundle)?;
         tracing::info!("enroll: stored ok");
         Ok(())
     }
@@ -323,13 +489,14 @@ impl TrueIdApp {
             HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
         }
 
-        let mut templates = self
+        let mut bundle = self
             .template_store
             .load_all(user)?
-            .filter(|t| !t.is_empty())
+            .filter(|b| b.has_rgb_enrollment())
             .ok_or(crate::domain::error::DomainError::NoEnrolledTemplate)?;
         tracing::debug!(
-            existing_templates = templates.len(),
+            existing_rgb = bundle.rgb.len(),
+            existing_ir = bundle.ir.len(),
             "add_template: loaded existing"
         );
 
@@ -348,35 +515,37 @@ impl TrueIdApp {
             capture_ms = t_cap.elapsed().as_millis(),
             "add_template: frames from camera"
         );
-        let frames = burst.rgb;
 
-        let mut embeddings = Vec::with_capacity(frames.len());
-        for (i, frame) in frames.iter().enumerate() {
-            if let Some(e) = self.try_embed_from_frame(frame)? {
-                tracing::debug!(
-                    frame_index = i,
-                    dim = e.0.len(),
-                    "add_template: frame contributed embedding"
-                );
-                embeddings.push(e);
-            } else {
-                tracing::debug!(frame_index = i, "add_template: frame skipped");
-            }
-        }
-        if embeddings.is_empty() {
-            tracing::warn!("add_template: no usable embeddings from any frame");
+        let embeddings_rgb = self.collect_embeddings(&burst.rgb, "add_template")?;
+        let embeddings_ir = if let Some(ref ir) = burst.ir {
+            self.collect_embeddings(ir, "add_template_ir")?
+        } else {
+            Vec::new()
+        };
+
+        if embeddings_rgb.is_empty() {
+            tracing::warn!("add_template: no usable RGB embeddings from any frame");
             return Err(crate::domain::error::DomainError::NoUsableFaceInCapture.into());
         }
-        let new_template = crate::domain::Embedding::try_average(&embeddings)
+
+        let new_rgb = crate::domain::Embedding::try_average(&embeddings_rgb)
             .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
+        bundle.rgb.push(new_rgb);
+
+        if !embeddings_ir.is_empty() {
+            let new_ir = crate::domain::Embedding::try_average(&embeddings_ir)
+                .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
+            bundle.ir.push(new_ir);
+        }
+
         tracing::info!(
-            from_frames = embeddings.len(),
-            template_dim = new_template.0.len(),
-            "add_template: new template averaged"
+            rgb_templates = bundle.rgb.len(),
+            ir_templates = bundle.ir.len(),
+            template_dim = bundle.rgb.last().map(|e| e.0.len()).unwrap_or(0),
+            "add_template: appended templates"
         );
-        templates.push(new_template);
-        self.template_store.save_all(user, &templates)?;
-        tracing::info!(total_templates = templates.len(), "add_template: stored ok");
+        self.template_store.save_all(user, &bundle)?;
+        tracing::info!("add_template: stored ok");
         Ok(())
     }
 }
@@ -387,7 +556,7 @@ mod tests {
     use crate::application::error::AppError;
     use crate::domain::error::DomainError;
     use crate::domain::{
-        BoundingBox, Embedding, FaceDetection, Frame, PixelFormat, StreamModality,
+        BoundingBox, Embedding, FaceDetection, Frame, PixelFormat, StreamModality, TemplateBundle,
     };
     use crate::ports::{
         AlignError, CameraCapture, CaptureError, CaptureSpec, CapturedBurst, DetectError,
@@ -425,6 +594,33 @@ mod tests {
             Ok(CapturedBurst {
                 rgb: vec![f; spec.frame_count as usize],
                 ir: None,
+            })
+        }
+    }
+
+    /// RGB + IR bursts of equal length (for dual-modality fusion tests).
+    struct TestCameraRgbIr;
+    impl CameraCapture for TestCameraRgbIr {
+        fn capture(&self, spec: CaptureSpec) -> Result<CapturedBurst, CaptureError> {
+            let spec = spec.validate()?;
+            let n = spec.frame_count as usize;
+            let rgb = Frame {
+                modality: StreamModality::Rgb,
+                width: 1,
+                height: 1,
+                format: PixelFormat::Gray8,
+                bytes: vec![0],
+            };
+            let ir = Frame {
+                modality: StreamModality::Ir,
+                width: 1,
+                height: 1,
+                format: PixelFormat::Gray8,
+                bytes: vec![1],
+            };
+            Ok(CapturedBurst {
+                rgb: vec![rgb; n],
+                ir: Some(vec![ir; n]),
             })
         }
     }
@@ -468,17 +664,29 @@ mod tests {
     }
 
     struct MemoryStore {
-        inner: std::sync::Mutex<std::collections::HashMap<UserId, Vec<Embedding>>>,
+        inner: std::sync::Mutex<std::collections::HashMap<UserId, TemplateBundle>>,
     }
 
     impl MemoryStore {
         fn with_template(user: UserId, emb: Embedding) -> Self {
-            Self::with_templates(user, vec![emb])
+            Self::with_rgb_templates(user, vec![emb])
+        }
+
+        fn with_rgb_templates(user: UserId, rgb: Vec<Embedding>) -> Self {
+            let mut m = std::collections::HashMap::new();
+            m.insert(user, TemplateBundle { rgb, ir: vec![] });
+            Self {
+                inner: std::sync::Mutex::new(m),
+            }
         }
 
         fn with_templates(user: UserId, templates: Vec<Embedding>) -> Self {
+            Self::with_rgb_templates(user, templates)
+        }
+
+        fn with_rgb_ir(user: UserId, rgb: Vec<Embedding>, ir: Vec<Embedding>) -> Self {
             let mut m = std::collections::HashMap::new();
-            m.insert(user, templates);
+            m.insert(user, TemplateBundle { rgb, ir });
             Self {
                 inner: std::sync::Mutex::new(m),
             }
@@ -492,12 +700,12 @@ mod tests {
     }
 
     impl TemplateStore for MemoryStore {
-        fn load_all(&self, user: &UserId) -> Result<Option<Vec<Embedding>>, StoreError> {
+        fn load_all(&self, user: &UserId) -> Result<Option<TemplateBundle>, StoreError> {
             Ok(self.inner.lock().unwrap().get(user).cloned())
         }
 
-        fn save_all(&self, user: &UserId, templates: &[Embedding]) -> Result<(), StoreError> {
-            self.inner.lock().unwrap().insert(*user, templates.to_vec());
+        fn save_all(&self, user: &UserId, bundle: &TemplateBundle) -> Result<(), StoreError> {
+            self.inner.lock().unwrap().insert(*user, bundle.clone());
             Ok(())
         }
     }
@@ -513,6 +721,23 @@ mod tests {
         }
     }
 
+    /// RGB template (x≈1): `matches` true with low reported similarity. IR template (z≈1): no match, low sim.
+    /// Used to ensure fusion does not treat single-modality quorum as similarity 1.0.
+    struct AsymmetricWeakRgbMatcher;
+    impl EmbeddingMatcher for AsymmetricWeakRgbMatcher {
+        fn matches(&self, _probe: &Embedding, enrolled: &Embedding) -> bool {
+            enrolled.0.first().copied().unwrap_or(0.0) >= 0.99
+        }
+
+        fn similarity(&self, _probe: &Embedding, enrolled: &Embedding) -> Option<f32> {
+            if enrolled.0.first().copied().unwrap_or(0.0) >= 0.99 {
+                Some(0.36)
+            } else {
+                Some(0.2)
+            }
+        }
+    }
+
     fn app_with_store(store: Arc<MemoryStore>, embed_out: Embedding) -> TrueIdApp {
         let template_store: Arc<dyn TemplateStore> = store;
         TrueIdApp::new(super::TrueIdAppDeps {
@@ -525,6 +750,7 @@ mod tests {
             template_store,
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
+            modality_fusion: ModalityFusionConfig::default(),
         })
     }
 
@@ -559,6 +785,7 @@ mod tests {
             template_store: store,
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
+            modality_fusion: ModalityFusionConfig::default(),
         });
         let err = app.ping().unwrap_err();
         assert!(err.to_string().contains("camera offline"));
@@ -599,8 +826,9 @@ mod tests {
         let store = Arc::new(MemoryStore::empty());
         let app = app_with_store(Arc::clone(&store), emb.clone());
         app.enroll(&UserId(2000)).unwrap();
-        let loaded = store.load_all(&UserId(2000)).unwrap();
-        assert_eq!(loaded, Some(vec![emb]));
+        let loaded = store.load_all(&UserId(2000)).unwrap().unwrap();
+        assert_eq!(loaded.rgb, vec![emb]);
+        assert!(loaded.ir.is_empty());
     }
 
     #[test]
@@ -650,6 +878,35 @@ mod tests {
     }
 
     #[test]
+    fn verify_fusion_does_not_inflate_quorum_to_perfect_rgb_score() {
+        let probe = Embedding(vec![0.5, 0.5, 0.5]);
+        let t_rgb = Embedding(vec![1.0, 0.0, 0.0]);
+        let t_ir = Embedding(vec![0.0, 0.0, 1.0]);
+        let store = Arc::new(MemoryStore::with_rgb_ir(
+            UserId(7100),
+            vec![t_rgb],
+            vec![t_ir],
+        ));
+        let template_store: Arc<dyn TemplateStore> = store;
+        let app = TrueIdApp::new(super::TrueIdAppDeps {
+            health: Arc::new(OkHealth),
+            camera: Arc::new(TestCameraRgbIr),
+            detector: Arc::new(FullFrameDetector),
+            aligner: Arc::new(CloneAligner),
+            liveness: Arc::new(AlwaysLive),
+            face_embedder: Arc::new(ConstFaceEmbedder {
+                out: probe.clone(),
+            }),
+            template_store,
+            matcher: Arc::new(AsymmetricWeakRgbMatcher),
+            capture: MultiFramePolicy::default(),
+            modality_fusion: ModalityFusionConfig::default(),
+        });
+        // q_rgb true (weak), q_ir false; fused raw score 0.45*0.36 + 0.55*0.2 < 0.5 — must not bump RGB to 1.0.
+        assert!(!app.verify(&UserId(7100)).unwrap());
+    }
+
+    #[test]
     fn add_template_requires_prior_enrollment() {
         let store = Arc::new(MemoryStore::empty());
         let app = app_with_store(store, Embedding(vec![1.0, 0.0]));
@@ -668,9 +925,10 @@ mod tests {
         let app = app_with_store(Arc::clone(&store), second.clone());
         app.add_template(&UserId(9000)).unwrap();
         let all = store.load_all(&UserId(9000)).unwrap().unwrap();
-        assert_eq!(all.len(), 2);
-        assert_eq!(all[0], first);
-        assert_eq!(all[1], second);
+        assert_eq!(all.rgb.len(), 2);
+        assert_eq!(all.rgb[0], first);
+        assert_eq!(all.rgb[1], second);
+        assert!(all.ir.is_empty());
     }
 
     #[test]
@@ -695,6 +953,7 @@ mod tests {
             template_store: store,
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
+            modality_fusion: ModalityFusionConfig::default(),
         });
         let err = app.enroll(&UserId(6000)).unwrap_err();
         assert!(matches!(
@@ -718,6 +977,7 @@ mod tests {
             template_store: store,
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
+            modality_fusion: ModalityFusionConfig::default(),
         });
         let err = app.enroll(&UserId(5000)).unwrap_err();
         assert!(err.to_string().contains("camera offline"));

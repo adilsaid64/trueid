@@ -26,6 +26,11 @@ paths:
 
 verification:
   match_threshold: 0.70
+  # When RGB + IR templates exist and both probes succeed, fused score uses these weights
+  fusion:
+    weight_rgb: 0.30
+    weight_ir: 0.70
+    fusion_threshold: 0.5
 
 development:
   mock_embedder: false

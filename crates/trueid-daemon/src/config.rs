@@ -67,6 +67,29 @@ pub struct PathsConfig {
 #[serde(default)]
 pub struct VerificationConfig {
     pub match_threshold: f32,
+    pub fusion: ModalityFusionYaml,
+}
+
+/// RGB vs IR weights when both modalities are enrolled and both probes exist.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ModalityFusionYaml {
+    pub weight_rgb: f32,
+    pub weight_ir: f32,
+    /// If both modalities met template quorum → accept. Else accept if
+    /// `weight_rgb * s_rgb + weight_ir * s_ir >= fusion_threshold` with **actual** max best similarities
+    /// in \[0, 1\] (quorum does not bump scores to 1.0).
+    pub fusion_threshold: f32,
+}
+
+impl Default for ModalityFusionYaml {
+    fn default() -> Self {
+        Self {
+            weight_rgb: 0.45,
+            weight_ir: 0.55,
+            fusion_threshold: 0.5,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -122,6 +145,7 @@ impl Default for VerificationConfig {
     fn default() -> Self {
         Self {
             match_threshold: 0.70,
+            fusion: ModalityFusionYaml::default(),
         }
     }
 }
