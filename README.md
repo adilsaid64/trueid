@@ -4,22 +4,22 @@ Linux facial authentication system written in Rust.
 
 A Windows Hello–like experience for Linux, with support for RGB and optional IR cameras.
 
-## 🧩 Components
+## Components
 
 `trueid` is composed of three core components:
 
 | Component            | Description                          | Responsibilities                                                                                               |
 | -------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| 🔧 **trueid-ctl**    | CLI tool for interacting with trueid | Enroll users, verify authentication, manage templates, download models                                         |
-| 🔐 **trueid-pam** | PAM module for system integration    | Hooks into login, `sudo`, and other PAM services                                                               |
-| ⚙️ **trueid-daemon**        | Background daemon                    | Camera capture (RGB/IR), face detection, alignment, liveness checks, embedding + matching, template management |
+| **trueid-ctl**    | CLI tool for interacting with trueid | Enroll users, verify authentication, manage templates, download models                                         |
+| **trueid-pam** | PAM module for system integration    | Hooks into login, `sudo`, and other PAM services                                                               |
+| **trueid-daemon**        | Background daemon                    | Camera capture (RGB/IR), face detection, alignment, liveness checks, embedding + matching, template management |
 
 
 * [Architecture](docs/architecture.md)
 * [Run / config](docs/developing.md)
 * [Models](docs/models.md)
 
-## 📦 Installation
+## Installation
 
 ### Ubuntu / Debian
 
@@ -47,7 +47,7 @@ cargo build --release
 
 If you're using a Windows Hello–compatible device or any camera with IR support, you may need to enable the IR emitter with [linux-enable-ir-emitter](https://github.com/EmixamPP/linux-enable-ir-emitter)
 
-## 🚀 Usage
+## Usage
 
 After installaion
 
