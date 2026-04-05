@@ -894,9 +894,7 @@ mod tests {
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
-            face_embedder: Arc::new(ConstFaceEmbedder {
-                out: probe.clone(),
-            }),
+            face_embedder: Arc::new(ConstFaceEmbedder { out: probe.clone() }),
             template_store,
             matcher: Arc::new(AsymmetricWeakRgbMatcher),
             capture: MultiFramePolicy::default(),
