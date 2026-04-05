@@ -46,3 +46,15 @@ pub trait VideoSource: Send + Sync {
     /// Drop `warmup_discard` buffers, then return `frame_count` decoded frames in order.
     fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError>;
 }
+
+/// Result of a single capture burst. `ir` is `None` when no IR source is configured.
+/// RGB and IR are not hardware-synchronised; timing depends on the implementation.
+pub struct CapturedBurst {
+    pub rgb: Vec<Frame>,
+    pub ir: Option<Vec<Frame>>,
+}
+
+/// Single capture call across one or more [`VideoSource`]s.
+pub trait CameraCapture: Send + Sync {
+    fn capture(&self, spec: CaptureSpec) -> Result<CapturedBurst, CaptureError>;
+}

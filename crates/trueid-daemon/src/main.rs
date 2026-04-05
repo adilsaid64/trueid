@@ -3,7 +3,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use trueid_core::ports::{FaceAligner, FaceDetector, FaceEmbedder};
-use trueid_core::{Embedding, MultiFramePolicy, StreamModality, TrueIdApp, TrueIdAppDeps};
+use trueid_core::{
+    CameraCapture, Embedding, MultiFramePolicy, StreamModality, TrueIdApp, TrueIdAppDeps,
+};
 use trueid_ipc::SOCKET_PATH;
 
 mod adapters;
@@ -49,60 +51,49 @@ fn main() -> std::io::Result<()> {
     let config = config::load_config();
 
     let health = Arc::new(adapters::DefaultHealth);
-    let video_rgb: Arc<dyn trueid_core::ports::VideoSource> =
-        if std::env::var("TRUEID_USE_MOCK_VIDEO_SOURCE")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-        {
+    let use_mock = std::env::var("TRUEID_USE_MOCK_VIDEO_SOURCE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    let cap_w = parse_u32_env_positive("TRUEID_CAPTURE_WIDTH", 640);
+    let cap_h = parse_u32_env_positive("TRUEID_CAPTURE_HEIGHT", 480);
+
+    let video_rgb: Arc<dyn trueid_core::ports::VideoSource> = if use_mock {
+        Arc::new(adapters::MockVideoSource::default_gray())
+    } else {
+        let index = config.rgb_camera_index.unwrap_or(DEFAULT_RGB_CAMERA_INDEX);
+        Arc::new(
+            adapters::V4lVideoSource::open_with_dimensions(index, cap_w, cap_h, StreamModality::Rgb)
+                .map_err(|e| {
+                    std::io::Error::other(format!(
+                        "camera open failed (index {index}): {e}. \
+                         Set TRUEID_USE_MOCK_VIDEO_SOURCE=1 to run without a device."
+                    ))
+                })?,
+        )
+    };
+
+    let camera: Arc<dyn CameraCapture> = if config.enable_ir.unwrap_or(false) {
+        let video_ir: Arc<dyn trueid_core::ports::VideoSource> = if use_mock {
             Arc::new(adapters::MockVideoSource::default_gray())
         } else {
-            let index: u32 = config.rgb_camera_index.unwrap_or(DEFAULT_RGB_CAMERA_INDEX);
-            let cap_w = parse_u32_env_positive("TRUEID_CAPTURE_WIDTH", 640);
-            let cap_h = parse_u32_env_positive("TRUEID_CAPTURE_HEIGHT", 480);
+            let index = config.ir_camera_index.unwrap_or(DEFAULT_IR_CAMERA_INDEX);
             Arc::new(
                 adapters::V4lVideoSource::open_with_dimensions(
                     index,
                     cap_w,
                     cap_h,
-                    StreamModality::Rgb,
+                    StreamModality::Ir,
                 )
                 .map_err(|e| {
-                    std::io::Error::other(format!(
-                        "camera open failed (index {index}): {e}. \
-                     Set TRUEID_USE_MOCK_VIDEO_SOURCE=1 to run without a device."
-                    ))
+                    std::io::Error::other(format!("IR camera open failed (index {index}): {e}"))
                 })?,
             )
         };
-
-    let video_ir: Option<Arc<dyn trueid_core::ports::VideoSource>> =
-        if config.enable_ir.unwrap_or(false) {
-            if std::env::var("TRUEID_USE_MOCK_VIDEO_SOURCE")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false)
-            {
-                Some(Arc::new(adapters::MockVideoSource::default_gray()))
-            } else {
-                let index: u32 = config.ir_camera_index.unwrap_or(DEFAULT_IR_CAMERA_INDEX);
-
-                let cap_w = parse_u32_env_positive("TRUEID_CAPTURE_WIDTH", 640);
-                let cap_h = parse_u32_env_positive("TRUEID_CAPTURE_HEIGHT", 480);
-
-                Some(Arc::new(
-                    adapters::V4lVideoSource::open_with_dimensions(
-                        index,
-                        cap_w,
-                        cap_h,
-                        StreamModality::Ir,
-                    )
-                    .map_err(|e| {
-                        std::io::Error::other(format!("IR camera open failed (index {index}): {e}"))
-                    })?,
-                ))
-            }
-        } else {
-            None
-        };
+        Arc::new(adapters::ParallelRgbIrCameraCapture::new(video_rgb, video_ir))
+    } else {
+        Arc::new(adapters::RgbOnlyCameraCapture::new(video_rgb))
+    };
 
     let face_embedder: Arc<dyn FaceEmbedder> = if std::env::var("TRUEID_USE_MOCK_EMBEDDER")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -141,8 +132,7 @@ fn main() -> std::io::Result<()> {
 
     let app = Arc::new(TrueIdApp::new(TrueIdAppDeps {
         health,
-        video_rgb,
-        video_ir,
+        camera,
         detector,
         aligner,
         liveness,

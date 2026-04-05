@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use crate::domain::{Embedding, Frame, UserId};
 use crate::ports::{
-    CaptureSpec, EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedder, Health, HealthStatus,
-    LivenessChecker, LivenessError, TemplateStore, VideoSource,
+    CameraCapture, CaptureSpec, EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedder, Health,
+    HealthStatus, LivenessChecker, LivenessError, TemplateStore,
 };
 
 use super::error::AppError;
@@ -34,8 +34,7 @@ fn template_quorum_required(template_count: usize) -> usize {
 /// Wired dependencies for [`TrueIdApp`].
 pub struct TrueIdAppDeps {
     pub health: Arc<dyn Health>,
-    pub video_rgb: Arc<dyn VideoSource>,
-    pub video_ir: Option<Arc<dyn VideoSource>>,
+    pub camera: Arc<dyn CameraCapture>,
     pub detector: Arc<dyn FaceDetector>,
     pub aligner: Arc<dyn FaceAligner>,
     pub liveness: Arc<dyn LivenessChecker>,
@@ -47,8 +46,7 @@ pub struct TrueIdAppDeps {
 
 pub struct TrueIdApp {
     health: Arc<dyn Health>,
-    video_rgb: Arc<dyn VideoSource>,
-    video_ir: Option<Arc<dyn VideoSource>>,
+    camera: Arc<dyn CameraCapture>,
     detector: Arc<dyn FaceDetector>,
     aligner: Arc<dyn FaceAligner>,
     liveness: Arc<dyn LivenessChecker>,
@@ -62,8 +60,7 @@ impl TrueIdApp {
     pub fn new(deps: TrueIdAppDeps) -> Self {
         Self {
             health: deps.health,
-            video_rgb: deps.video_rgb,
-            video_ir: deps.video_ir,
+            camera: deps.camera,
             detector: deps.detector,
             aligner: deps.aligner,
             liveness: deps.liveness,
@@ -153,18 +150,14 @@ impl TrueIdApp {
         );
 
         let t_cap = Instant::now();
-        let frames_rgb = self.video_rgb.capture(spec)?;
-
-        if let Some(ir) = &self.video_ir {
-            tracing::debug!("verify: IR source available (not yet used)");
-            let _ = ir.capture(spec)?; // TODO: make use of IR frames
-        }
-
+        let burst = self.camera.capture(spec)?;
         tracing::info!(
-            returned = frames_rgb.len(),
+            returned = burst.rgb.len(),
+            has_ir = burst.ir.is_some(),
             capture_ms = t_cap.elapsed().as_millis(),
             "verify: frames from camera"
         );
+        let frames_rgb = burst.rgb;
 
         let Some(templates) = self.template_store.load_all(user)? else {
             return Err(crate::domain::error::DomainError::NoEnrolledTemplate.into());
@@ -280,12 +273,14 @@ impl TrueIdApp {
         );
 
         let t_cap = Instant::now();
-        let frames = self.video_rgb.capture(spec)?;
+        let burst = self.camera.capture(spec)?;
         tracing::info!(
-            returned = frames.len(),
+            returned = burst.rgb.len(),
+            has_ir = burst.ir.is_some(),
             capture_ms = t_cap.elapsed().as_millis(),
             "enroll: frames from camera"
         );
+        let frames = burst.rgb;
 
         let mut embeddings = Vec::with_capacity(frames.len());
         for (i, frame) in frames.iter().enumerate() {
@@ -346,12 +341,14 @@ impl TrueIdApp {
         );
 
         let t_cap = Instant::now();
-        let frames = self.video_rgb.capture(spec)?;
+        let burst = self.camera.capture(spec)?;
         tracing::info!(
-            returned = frames.len(),
+            returned = burst.rgb.len(),
+            has_ir = burst.ir.is_some(),
             capture_ms = t_cap.elapsed().as_millis(),
             "add_template: frames from camera"
         );
+        let frames = burst.rgb;
 
         let mut embeddings = Vec::with_capacity(frames.len());
         for (i, frame) in frames.iter().enumerate() {
@@ -393,9 +390,9 @@ mod tests {
         BoundingBox, Embedding, FaceDetection, Frame, PixelFormat, StreamModality,
     };
     use crate::ports::{
-        AlignError, CaptureError, CaptureSpec, DetectError, EmbeddingMatcher, FaceAligner,
-        FaceDetector, FaceEmbedError, FaceEmbedder, Health, HealthStatus, LivenessChecker,
-        LivenessError, StoreError, TemplateStore, VideoSource,
+        AlignError, CameraCapture, CapturedBurst, CaptureError, CaptureSpec, DetectError,
+        EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedError, FaceEmbedder, Health,
+        HealthStatus, LivenessChecker, LivenessError, StoreError, TemplateStore,
     };
 
     struct OkHealth;
@@ -414,13 +411,9 @@ mod tests {
         }
     }
 
-    struct TestFrame;
-    impl VideoSource for TestFrame {
-        fn modality(&self) -> StreamModality {
-            StreamModality::Rgb
-        }
-
-        fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError> {
+    struct TestCamera;
+    impl CameraCapture for TestCamera {
+        fn capture(&self, spec: CaptureSpec) -> Result<CapturedBurst, CaptureError> {
             let spec = spec.validate()?;
             let f = Frame {
                 modality: StreamModality::Rgb,
@@ -429,7 +422,10 @@ mod tests {
                 format: PixelFormat::Gray8,
                 bytes: vec![0],
             };
-            Ok(vec![f; spec.frame_count as usize])
+            Ok(CapturedBurst {
+                rgb: vec![f; spec.frame_count as usize],
+                ir: None,
+            })
         }
     }
 
@@ -521,8 +517,7 @@ mod tests {
         let template_store: Arc<dyn TemplateStore> = store;
         TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(OkHealth),
-            video_rgb: Arc::new(TestFrame),
-            video_ir: None,
+            camera: Arc::new(TestCamera),
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
@@ -554,8 +549,7 @@ mod tests {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(BadHealth),
-            video_rgb: Arc::new(TestFrame),
-            video_ir: None,
+            camera: Arc::new(TestCamera),
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
@@ -691,8 +685,7 @@ mod tests {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(OkHealth),
-            video_rgb: Arc::new(TestFrame),
-            video_ir: None,
+            camera: Arc::new(TestCamera),
             detector: Arc::new(NoFaceDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
@@ -715,8 +708,7 @@ mod tests {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(BadHealth),
-            video_rgb: Arc::new(TestFrame),
-            video_ir: None,
+            camera: Arc::new(TestCamera),
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
