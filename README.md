@@ -31,3 +31,7 @@ git clone https://github.com/adilsaid64/trueid
 cd trueid 
 cargo build --release
 ```
+
+### IR Camera
+
+Your IR camera might not work straight a way. You need to configure it with this [linux-enable-ir-emitter](https://github.com/EmixamPP/linux-enable-ir-emitter)
