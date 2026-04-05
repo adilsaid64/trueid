@@ -1,13 +1,13 @@
 //! V4L2 camera → RGB8 [`Frame`]s.
 //!
 //! Opens `/dev/video{N}` only during each capture burst, decodes MJPEG (EXIF orientation) or raw
-//! YUYV/grey, then optional `TRUEID_V4L_ROTATE_180` / `TRUEID_V4L_FLIP_VERTICAL`.
-//! For MJPEG, env-based fixes run only when EXIF orientation is `NoTransforms`; otherwise they
+//! YUYV/grey, then optional rotate/flip from config (`camera.v4l`).
+//! For MJPEG, those fixes run only when EXIF orientation is `NoTransforms`; otherwise they
 //! would stack on top of EXIF and invert the image (e.g. upside-down aligned faces).
 
 use std::io;
 use std::io::Cursor;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::time::Instant;
 
 use image::imageops;
@@ -26,6 +26,7 @@ pub struct V4lVideoSource {
     width: u32,
     height: u32,
     modality: StreamModality,
+    pixel_fix: V4lPixelFix,
     /// Serializes bursts; the device fd is only held during `capture`.
     capture_lock: Mutex<()>,
 }
@@ -42,6 +43,8 @@ impl V4lVideoSource {
         width: u32,
         height: u32,
         modality: StreamModality,
+        rotate_180: bool,
+        flip_vertical: bool,
     ) -> Result<Self, CaptureError> {
         let dev = Device::new(index as usize).map_err(io_to_capture)?;
         let _active = negotiate_format(&dev, width, height, modality)?;
@@ -51,11 +54,23 @@ impl V4lVideoSource {
         drop(_stream);
         drop(dev);
 
+        let pixel_fix = if rotate_180 {
+            V4lPixelFix::Rotate180
+        } else if flip_vertical {
+            V4lPixelFix::FlipVertical
+        } else {
+            V4lPixelFix::None
+        };
+        if pixel_fix != V4lPixelFix::None {
+            tracing::info!(?pixel_fix, "v4l: sensor pixel fix enabled");
+        }
+
         Ok(Self {
             index,
             width,
             height,
             modality,
+            pixel_fix,
             capture_lock: Mutex::new(()),
         })
     }
@@ -110,8 +125,9 @@ fn decode_payload(
     width: u32,
     height: u32,
     modality: StreamModality,
+    pixel_fix: V4lPixelFix,
 ) -> Result<(Vec<u8>, u32, u32, PixelFormat), CaptureError> {
-    let (bytes, w, h, skip_env_sensor_fix) = if matches_fourcc(fourcc, b"MJPG") {
+    let (bytes, w, h, skip_sensor_fix) = if matches_fourcc(fourcc, b"MJPG") {
         decode_mjpeg_apply_exif(payload)?
     } else if matches_fourcc(fourcc, b"YUYV") {
         let bytes = yuyv_to_rgb(payload, width, height)?;
@@ -136,7 +152,7 @@ fn decode_payload(
             fourcc.str().unwrap_or("?")
         )));
     };
-    let (bytes, w, h) = apply_optional_sensor_fix(bytes, w, h, skip_env_sensor_fix)?;
+    let (bytes, w, h) = apply_optional_sensor_fix(bytes, w, h, skip_sensor_fix, pixel_fix)?;
     Ok((bytes, w, h, PixelFormat::Rgb8))
 }
 
@@ -147,44 +163,21 @@ enum V4lPixelFix {
     FlipVertical,
 }
 
-fn env_truthy(key: &str) -> bool {
-    std::env::var(key)
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-}
-
-fn pixel_fix_from_env() -> V4lPixelFix {
-    static FIX: OnceLock<V4lPixelFix> = OnceLock::new();
-    *FIX.get_or_init(|| {
-        let f = if env_truthy("TRUEID_V4L_ROTATE_180") {
-            V4lPixelFix::Rotate180
-        } else if env_truthy("TRUEID_V4L_FLIP_VERTICAL") {
-            V4lPixelFix::FlipVertical
-        } else {
-            V4lPixelFix::None
-        };
-        if f != V4lPixelFix::None {
-            tracing::info!(?f, "v4l: sensor pixel fix enabled");
-        }
-        f
-    })
-}
-
 fn apply_optional_sensor_fix(
     rgb: Vec<u8>,
     width: u32,
     height: u32,
-    skip_env_sensor_fix: bool,
+    skip_sensor_fix: bool,
+    fix: V4lPixelFix,
 ) -> Result<(Vec<u8>, u32, u32), CaptureError> {
-    let fix = pixel_fix_from_env();
     if fix == V4lPixelFix::None {
         return Ok((rgb, width, height));
     }
-    if skip_env_sensor_fix {
+    if skip_sensor_fix {
         tracing::info!(
             ?fix,
-            "v4l: skipping env sensor fix (MJPEG already oriented via EXIF; \
-             TRUEID_V4L_ROTATE_180 would flip it again)"
+            "v4l: skipping sensor fix (MJPEG already oriented via EXIF; \
+             rotate_180 would flip it again)"
         );
         return Ok((rgb, width, height));
     }
@@ -200,9 +193,7 @@ fn apply_optional_sensor_fix(
     Ok((out.into_raw(), w, h))
 }
 
-/// Returns `(rgb, w, h, skip_env_sensor_fix)`.
-/// `skip_env_sensor_fix` is true when EXIF requested a non-identity orientation so we do not also
-/// apply `TRUEID_V4L_ROTATE_180` / `TRUEID_V4L_FLIP_VERTICAL` (avoids double correction).
+/// Returns `(rgb, w, h, skip_sensor_fix)` — last flag true when EXIF already oriented the JPEG.
 fn decode_mjpeg_apply_exif(payload: &[u8]) -> Result<(Vec<u8>, u32, u32, bool), CaptureError> {
     let mut decoder = ImageReader::with_format(Cursor::new(payload), ImageFormat::Jpeg)
         .into_decoder()
@@ -219,8 +210,8 @@ fn decode_mjpeg_apply_exif(payload: &[u8]) -> Result<(Vec<u8>, u32, u32, bool), 
     let rgb = img.to_rgb8();
     let w = rgb.width();
     let h = rgb.height();
-    let skip_env_sensor_fix = orientation != Orientation::NoTransforms;
-    Ok((rgb.into_raw(), w, h, skip_env_sensor_fix))
+    let skip_sensor_fix = orientation != Orientation::NoTransforms;
+    Ok((rgb.into_raw(), w, h, skip_sensor_fix))
 }
 
 fn grey8_to_rgb(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CaptureError> {
@@ -347,8 +338,14 @@ impl VideoSource for V4lVideoSource {
 
         let mut frames = Vec::with_capacity(keep);
         for raw in raws {
-            let (bytes, fw, fh, format) =
-                decode_payload(&fourcc, &raw, width, height, self.modality)?;
+            let (bytes, fw, fh, format) = decode_payload(
+                &fourcc,
+                &raw,
+                width,
+                height,
+                self.modality,
+                self.pixel_fix,
+            )?;
             frames.push(Frame {
                 modality: self.modality,
                 width: fw,

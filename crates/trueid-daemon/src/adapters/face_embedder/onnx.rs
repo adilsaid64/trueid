@@ -2,7 +2,7 @@
 //!
 //! Input: float32 NCHW `[1,3,H,W]` or NHWC `[1,H,W,3]` (often 112×112).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use image::{DynamicImage, Rgb, RgbImage, imageops::FilterType};
@@ -216,39 +216,16 @@ impl FaceEmbedder for OnnxFaceEmbedder {
     }
 }
 
-/// `TRUEID_FACE_MODEL` or `/var/lib/trueid/models/face_embedding.onnx`
-/// or `$XDG_DATA_HOME/trueid/models/face_embedding.onnx`.
-pub fn default_model_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("TRUEID_FACE_MODEL") {
-        return Some(PathBuf::from(p));
-    }
-
-    let system_path = PathBuf::from("/var/lib/trueid/models/face_embedding.onnx");
-    if system_path.exists() {
-        return Some(system_path);
-    }
-
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-
-    Some(base.join("trueid/models/face_embedding.onnx"))
-}
-
-/// Load ONNX embedder from disk or return an error string.
-pub fn build_face_embedder() -> Result<Arc<dyn FaceEmbedder>, String> {
-    let path = default_model_path().ok_or_else(|| {
-        "TRUEID_FACE_MODEL not set and could not resolve XDG_DATA_HOME or HOME".to_string()
-    })?;
-    if !path.exists() {
+/// Load ONNX embedder from `model_path` (see `config.yaml` → `models.face_embedding`).
+pub fn build_face_embedder(model_path: &Path) -> Result<Arc<dyn FaceEmbedder>, String> {
+    if !model_path.exists() {
         return Err(format!(
             "face ONNX model not found at {}.\n\
-             Place an InsightFace-compatible ONNX (f32 input) there, or set TRUEID_FACE_MODEL.\n\
-             For quick UI tests without a model, set TRUEID_USE_MOCK_EMBEDDER=1.",
-            path.display()
+             Set `models.face_embedding` in config, or enable `development.mock_embedder`.",
+            model_path.display()
         ));
     }
     Ok(Arc::new(
-        OnnxFaceEmbedder::from_file(&path).map_err(|e| e.to_string())?,
+        OnnxFaceEmbedder::from_file(model_path).map_err(|e| e.to_string())?,
     ))
 }

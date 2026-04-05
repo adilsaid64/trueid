@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use trueid_core::ports::{FaceAligner, FaceDetector, FaceEmbedder};
@@ -12,28 +12,9 @@ mod adapters;
 mod config;
 mod ipc;
 
-// `/dev/video{N}` when `TRUEID_CAMERA_INDEX` unset.
-const DEFAULT_RGB_CAMERA_INDEX: u32 = 0;
-const DEFAULT_IR_CAMERA_INDEX: u32 = 2;
-
-fn parse_u32_env_positive(key: &str, default: u32) -> u32 {
-    std::env::var(key)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(default)
-}
-
-fn parse_match_threshold() -> f32 {
-    std::env::var("TRUEID_MATCH_THRESHOLD")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0.70)
-}
-
-/// `tracing-subscriber` fmt layer + `EnvFilter` from `RUST_LOG` (same convention as `env_logger`).
-fn init_tracing() {
+fn init_tracing(level: &str) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .or_else(|_| tracing_subscriber::EnvFilter::try_new(level))
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -42,98 +23,101 @@ fn init_tracing() {
 }
 
 fn main() -> std::io::Result<()> {
-    init_tracing();
+    let cfg = config::load_config();
+    init_tracing(&cfg.logging.level);
 
     if Path::new(SOCKET_PATH).exists() {
         fs::remove_file(SOCKET_PATH)?;
     }
 
-    let config = config::load_config();
-
     let health = Arc::new(adapters::DefaultHealth);
-    let use_mock = std::env::var("TRUEID_USE_MOCK_VIDEO_SOURCE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
 
-    let cap_w = parse_u32_env_positive("TRUEID_CAPTURE_WIDTH", 640);
-    let cap_h = parse_u32_env_positive("TRUEID_CAPTURE_HEIGHT", 480);
+    let cap_w = cfg.camera.width;
+    let cap_h = cfg.camera.height;
+    let v4l_rotate = cfg.camera.v4l.rotate_180;
+    let v4l_flip = cfg.camera.v4l.flip_vertical;
 
-    let video_rgb: Arc<dyn trueid_core::ports::VideoSource> = if use_mock {
+    let video_rgb: Arc<dyn trueid_core::ports::VideoSource> = if cfg.camera.mock {
         Arc::new(adapters::MockVideoSource::default_gray())
     } else {
-        let index = config.rgb_camera_index.unwrap_or(DEFAULT_RGB_CAMERA_INDEX);
+        let index = cfg.camera.rgb_index;
         Arc::new(
             adapters::V4lVideoSource::open_with_dimensions(
                 index,
                 cap_w,
                 cap_h,
                 StreamModality::Rgb,
+                v4l_rotate,
+                v4l_flip,
             )
             .map_err(|e| {
                 std::io::Error::other(format!(
                     "camera open failed (index {index}): {e}. \
-                         Set TRUEID_USE_MOCK_VIDEO_SOURCE=1 to run without a device."
+                     Set `camera.mock: true` in config to run without a device."
                 ))
             })?,
         )
     };
 
-    let camera: Arc<dyn CameraCapture> = if config.enable_ir.unwrap_or(false) {
-        let video_ir: Arc<dyn trueid_core::ports::VideoSource> = if use_mock {
+    let camera: Arc<dyn CameraCapture> = if cfg.camera.enable_ir {
+        let video_ir: Arc<dyn trueid_core::ports::VideoSource> = if cfg.camera.mock {
             Arc::new(adapters::MockVideoSource::default_gray())
         } else {
-            let index = config.ir_camera_index.unwrap_or(DEFAULT_IR_CAMERA_INDEX);
+            let index = cfg.camera.ir_index;
             Arc::new(
                 adapters::V4lVideoSource::open_with_dimensions(
                     index,
                     cap_w,
                     cap_h,
                     StreamModality::Ir,
+                    v4l_rotate,
+                    v4l_flip,
                 )
                 .map_err(|e| {
                     std::io::Error::other(format!("IR camera open failed (index {index}): {e}"))
                 })?,
             )
         };
-        Arc::new(adapters::ParallelRgbIrCameraCapture::new(
-            video_rgb, video_ir,
-        ))
+        Arc::new(adapters::ParallelRgbIrCameraCapture::new(video_rgb, video_ir))
     } else {
         Arc::new(adapters::RgbOnlyCameraCapture::new(video_rgb))
     };
 
-    let face_embedder: Arc<dyn FaceEmbedder> = if std::env::var("TRUEID_USE_MOCK_EMBEDDER")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-    {
+    let face_embedder: Arc<dyn FaceEmbedder> = if cfg.development.mock_embedder {
         Arc::new(adapters::MockFaceEmbedder::new(Embedding(vec![
             1.0, 0.0, 0.0,
         ])))
     } else {
-        adapters::build_face_embedder().map_err(std::io::Error::other)?
+        let p = PathBuf::from(&cfg.models.face_embedding);
+        adapters::build_face_embedder(&p).map_err(std::io::Error::other)?
     };
+
     let template_store = Arc::new(
-        adapters::FileTemplateStore::open_default()
+        adapters::FileTemplateStore::open(&cfg.paths.templates)
             .map_err(|e| std::io::Error::other(e.to_string()))?,
     );
-    let match_threshold = config.match_threshold.unwrap_or_else(parse_match_threshold);
+
+    let match_threshold = cfg.verification.match_threshold;
     let matcher = Arc::new(adapters::CosineMatcher::new(match_threshold));
 
-    let detector: Arc<dyn FaceDetector> = if std::env::var("TRUEID_USE_MOCK_DETECTOR")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-    {
+    let detector: Arc<dyn FaceDetector> = if cfg.development.mock_detector {
         Arc::new(adapters::FullFrameFaceDetector)
     } else {
-        adapters::build_face_detector().map_err(std::io::Error::other)?
+        let p = PathBuf::from(&cfg.models.face_detector);
+        adapters::build_face_detector(&p).map_err(std::io::Error::other)?
     };
-    let aligner: Arc<dyn FaceAligner> = if std::env::var("TRUEID_USE_PASSTHROUGH_ALIGNER")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-    {
+
+    let debug_aligned = cfg
+        .paths
+        .debug_aligned_faces
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+
+    let aligner: Arc<dyn FaceAligner> = if cfg.development.passthrough_aligner {
         Arc::new(adapters::PassthroughFaceAligner)
     } else {
-        Arc::new(adapters::CropFaceAligner::default())
+        Arc::new(adapters::CropFaceAligner::with_debug_dir(debug_aligned))
     };
     let liveness = Arc::new(adapters::AlwaysLiveLiveness);
 

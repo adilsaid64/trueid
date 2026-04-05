@@ -19,11 +19,6 @@ pub struct FileTemplateStore {
 }
 
 impl FileTemplateStore {
-    /// Env `TRUEID_TEMPLATE_DIR`, or `$XDG_DATA_HOME/trueid/templates`.
-    pub fn open_default() -> Result<Self, StoreError> {
-        Self::open(template_dir()?)
-    }
-
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let root = root.into();
         fs::create_dir_all(&root).map_err(|e| {
@@ -38,13 +33,6 @@ impl FileTemplateStore {
     fn path_for(&self, user: &UserId) -> PathBuf {
         self.root.join(format!("{}.json", user.0))
     }
-}
-
-fn template_dir() -> Result<PathBuf, StoreError> {
-    if let Ok(dir) = std::env::var("TRUEID_TEMPLATE_DIR") {
-        return Ok(PathBuf::from(dir));
-    }
-    Ok(PathBuf::from("/var/lib/trueid/templates"))
 }
 
 fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), StoreError> {

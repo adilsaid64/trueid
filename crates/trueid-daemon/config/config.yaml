@@ -1,4 +1,31 @@
-rgb_camera_index: 0
-enable_ir: false
-ir_camera_index: 2
-match_threshold: 0.70
+# trueid-daemon — all settings in one place (installed to /etc/trueid/config.yaml).
+
+logging:
+  level: info
+
+camera:
+  rgb_index: 0
+  ir_index: 2
+  enable_ir: false
+  width: 640
+  height: 480
+  mock: false
+  v4l:
+    rotate_180: false
+    flip_vertical: false
+
+models:
+  face_embedding: /var/lib/trueid/models/face_embedding.onnx
+  face_detector: /var/lib/trueid/models/face_detection_yunet_2023mar.onnx
+
+paths:
+  templates: /var/lib/trueid/templates
+  # debug_aligned_faces: /tmp/trueid-aligned
+
+verification:
+  match_threshold: 0.70
+
+development:
+  mock_embedder: false
+  mock_detector: false
+  passthrough_aligner: false

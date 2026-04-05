@@ -1,8 +1,7 @@
 //! Five-point landmark similarity warp to InsightFace 112 reference (YuNet) or square bbox crop.
-//! Optional `TRUEID_DEBUG_ALIGNED_DIR`: write each aligned face as PNG for debugging.
+//! Optional debug directory from config (`paths.debug_aligned_faces`): dump aligned PNGs.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -29,21 +28,8 @@ const DEFAULT_MARGIN: f32 = 0.25;
 
 static ALIGNED_DUMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-static ALIGNED_DUMP_ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
-
-fn aligned_dump_root() -> Option<&'static Path> {
-    ALIGNED_DUMP_ROOT
-        .get_or_init(|| {
-            std::env::var("TRUEID_DEBUG_ALIGNED_DIR")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from)
-        })
-        .as_deref()
-}
-
-fn maybe_dump_aligned_face(aligned: &Frame) {
-    let Some(root) = aligned_dump_root() else {
+fn maybe_dump_aligned_face(debug_root: Option<&Path>, aligned: &Frame) {
+    let Some(root) = debug_root else {
         return;
     };
     if aligned.format != PixelFormat::Rgb8 {
@@ -85,20 +71,27 @@ fn maybe_dump_aligned_face(aligned: &Frame) {
 pub struct CropFaceAligner {
     output_size: u32,
     margin: f32,
+    debug_aligned_dir: Option<PathBuf>,
 }
 
 impl Default for CropFaceAligner {
     fn default() -> Self {
-        Self::new(DEFAULT_OUTPUT, DEFAULT_MARGIN)
+        Self::new(DEFAULT_OUTPUT, DEFAULT_MARGIN, None)
     }
 }
 
 impl CropFaceAligner {
-    pub fn new(output_size: u32, margin: f32) -> Self {
+    pub fn new(output_size: u32, margin: f32, debug_aligned_dir: Option<PathBuf>) -> Self {
         Self {
             output_size: output_size.max(1),
             margin: margin.max(0.0),
+            debug_aligned_dir,
         }
+    }
+
+    /// Default output size (112) and margin (0.25), optional aligned-face PNG dump dir.
+    pub fn with_debug_dir(debug_aligned_dir: Option<PathBuf>) -> Self {
+        Self::new(DEFAULT_OUTPUT, DEFAULT_MARGIN, debug_aligned_dir)
     }
 }
 
@@ -149,7 +142,7 @@ impl FaceAligner for CropFaceAligner {
             format: PixelFormat::Rgb8,
             bytes: cropped.into_raw(),
         };
-        maybe_dump_aligned_face(&aligned);
+        maybe_dump_aligned_face(self.debug_aligned_dir.as_deref(), &aligned);
         Ok(aligned)
     }
 }

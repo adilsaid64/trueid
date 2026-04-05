@@ -370,40 +370,16 @@ impl FaceDetector for OnnxYuNetDetector {
     }
 }
 
-/// `TRUEID_FACE_DETECTOR_MODEL` or `$XDG_DATA_HOME/trueid/models/face_detection_yunet_2023mar.onnx`.
-pub fn default_detector_path() -> Option<std::path::PathBuf> {
-    if let Ok(p) = std::env::var("TRUEID_FACE_DETECTOR_MODEL") {
-        return Some(std::path::PathBuf::from(p));
-    }
-
-    let system_path =
-        std::path::PathBuf::from("/var/lib/trueid/models/face_detection_yunet_2023mar.onnx");
-    if system_path.exists() {
-        return Some(system_path);
-    }
-
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
-        })?;
-
-    Some(base.join("trueid/models/face_detection_yunet_2023mar.onnx"))
-}
-
-pub fn build_face_detector() -> Result<std::sync::Arc<dyn FaceDetector>, String> {
-    let path = default_detector_path().ok_or_else(|| {
-        "TRUEID_FACE_DETECTOR_MODEL not set and could not resolve XDG_DATA_HOME or HOME".to_string()
-    })?;
-    if !path.exists() {
+/// Load YuNet ONNX from `model_path` (see `config.yaml` → `models.face_detector`).
+pub fn build_face_detector(model_path: &std::path::Path) -> Result<std::sync::Arc<dyn FaceDetector>, String> {
+    if !model_path.exists() {
         return Err(format!(
             "face detector ONNX not found at {}.\n\
-             Download OpenCV Zoo YuNet: face_detection_yunet_2023mar.onnx into that folder, or set TRUEID_FACE_DETECTOR_MODEL.\n\
-             Or set TRUEID_USE_MOCK_DETECTOR=1 for full-frame stub.",
-            path.display()
+             Set `models.face_detector` in config, or enable `development.mock_detector`.",
+            model_path.display()
         ));
     }
     Ok(std::sync::Arc::new(
-        OnnxYuNetDetector::from_file(&path).map_err(|e| e.to_string())?,
+        OnnxYuNetDetector::from_file(model_path).map_err(|e| e.to_string())?,
     ))
 }
