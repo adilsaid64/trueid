@@ -1,5 +1,4 @@
-//! Five-point landmark similarity warp to InsightFace 112 reference (YuNet) or square bbox crop.
-//! Optional debug directory from config (`paths.debug_aligned_faces`): dump aligned PNGs.
+//! Landmark warp to 112² or bbox crop; optional `paths.debug_aligned_faces` PNG dump.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,10 +10,8 @@ use nalgebra::{Matrix2, SVD};
 use trueid_core::ports::{AlignError, FaceAligner};
 use trueid_core::{BoundingBox, FaceDetection, FaceLandmarks, Frame, PixelFormat};
 
-/// Default aligned face size (InsightFace / ArcFace-style models often use 112×112).
 const DEFAULT_OUTPUT: u32 = 112;
 
-/// ArcFace / InsightFace 112×112 canonical template (same order as [`FaceLandmarks`]).
 const REF112_FIVE: [(f32, f32); 5] = [
     (38.2946, 51.6963), // left eye
     (73.5318, 51.5014), // right eye
@@ -23,7 +20,6 @@ const REF112_FIVE: [(f32, f32); 5] = [
     (70.7299, 92.2041), // mouth right
 ];
 
-/// Expand bbox by this fraction of width/height before squaring (e.g. 0.25 → +25% size).
 const DEFAULT_MARGIN: f32 = 0.25;
 
 static ALIGNED_DUMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -67,7 +63,6 @@ fn maybe_dump_aligned_face(debug_root: Option<&Path>, aligned: &Frame) {
     }
 }
 
-/// Face-aligned crop for [`FaceEmbedder`](trueid_core::ports::FaceEmbedder).
 pub struct CropFaceAligner {
     output_size: u32,
     margin: f32,
@@ -188,7 +183,7 @@ fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, String> {
     }
 }
 
-/// Square box around detection, expanded by `margin`, clamped to the unit square.
+/// Expanded square bbox in normalized coords.
 fn square_crop_bbox(b: &BoundingBox, margin: f32) -> BoundingBox {
     let cx = b.x + b.w * 0.5;
     let cy = b.y + b.h * 0.5;
@@ -240,8 +235,7 @@ fn crop_and_resize(
     Ok(resized.to_rgb8())
 }
 
-/// Umeyama similarity (InsightFace `norm_crop` / scikit-image `SimilarityTransform`).
-/// Maps `src` landmark pixels → `dst` reference: `dst ≈ c * R * src + t` with orthogonal `R`.
+/// Similarity transform: `src` landmarks → `dst` reference (Umeyama).
 fn umeyama_similarity_2d(
     src: &[[f32; 2]; 5],
     dst: &[[f32; 2]; 5],

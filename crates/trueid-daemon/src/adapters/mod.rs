@@ -1,4 +1,4 @@
-//! Wiring for concrete ports (barrel re-exports).
+//! Port implementations.
 
 mod face_aligner;
 mod face_detector;

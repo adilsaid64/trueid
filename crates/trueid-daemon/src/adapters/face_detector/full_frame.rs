@@ -1,7 +1,6 @@
 use trueid_core::ports::{DetectError, FaceDetector};
 use trueid_core::{BoundingBox, FaceDetection, Frame};
 
-/// Treats the full frame as one face (for dev/tests).
 pub struct FullFrameFaceDetector;
 
 impl FaceDetector for FullFrameFaceDetector {

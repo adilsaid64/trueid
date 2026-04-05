@@ -8,7 +8,7 @@ pub enum CaptureError {
     Failed(String),
 }
 
-/// Warm-up frames to drop, then frames to return, in one `capture` call.
+/// Discard `warmup_discard` buffers, then capture `frame_count` frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CaptureSpec {
     pub warmup_discard: u32,
@@ -43,18 +43,15 @@ impl CaptureSpec {
 pub trait VideoSource: Send + Sync {
     fn modality(&self) -> StreamModality;
 
-    /// Drop `warmup_discard` buffers, then return `frame_count` decoded frames in order.
     fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError>;
 }
 
-/// Result of a single capture burst. `ir` is `None` when no IR source is configured.
-/// RGB and IR are not hardware-synchronised; timing depends on the implementation.
+/// One burst; `ir` absent without IR hardware. Streams not frame-synced.
 pub struct CapturedBurst {
     pub rgb: Vec<Frame>,
     pub ir: Option<Vec<Frame>>,
 }
 
-/// Single capture call across one or more [`VideoSource`]s.
 pub trait CameraCapture: Send + Sync {
     fn capture(&self, spec: CaptureSpec) -> Result<CapturedBurst, CaptureError>;
 }

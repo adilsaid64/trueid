@@ -1,6 +1,6 @@
 use super::Embedding;
 
-/// Per-user enrollment: RGB and IR templates are stored and matched separately.
+/// RGB and IR template lists; verify matches each side separately.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemplateBundle {
     pub rgb: Vec<Embedding>,
@@ -15,12 +15,10 @@ impl TemplateBundle {
         }
     }
 
-    /// Any stored templates (used for “is there a file / record?”).
     pub fn is_empty(&self) -> bool {
         self.rgb.is_empty() && self.ir.is_empty()
     }
 
-    /// Primary enrollment gate: RGB path is required for first enroll.
     pub fn has_rgb_enrollment(&self) -> bool {
         !self.rgb.is_empty()
     }

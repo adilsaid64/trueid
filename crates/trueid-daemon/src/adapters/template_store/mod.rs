@@ -1,4 +1,4 @@
-//! JSON files on disk for [`TemplateStore`](trueid_core::ports::TemplateStore).
+//! Disk `TemplateStore`.
 
 mod disk;
 

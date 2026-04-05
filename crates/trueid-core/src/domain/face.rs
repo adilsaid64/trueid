@@ -1,6 +1,5 @@
-//! Face box and landmarks in normalized coordinates (0–1 of frame width/height).
+//! Face geometry in normalized [0,1] frame coordinates.
 
-/// Bounding box: top-left `(x, y)`, size `(w, h)`, all relative to frame size.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoundingBox {
     pub x: f32,
@@ -19,7 +18,6 @@ impl BoundingBox {
         }
     }
 
-    /// In range and positive area (allows tiny float slack).
     pub fn is_valid(&self) -> bool {
         self.w > 1e-6
             && self.h > 1e-6
@@ -30,7 +28,6 @@ impl BoundingBox {
     }
 }
 
-/// Five landmark points (normalized), for alignment. Optional if the detector only gives a box.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FaceLandmarks {
     pub left_eye: (f32, f32),
@@ -40,7 +37,6 @@ pub struct FaceLandmarks {
     pub mouth_right: (f32, f32),
 }
 
-/// One face: box plus optional landmarks.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FaceDetection {
     pub bbox: BoundingBox,

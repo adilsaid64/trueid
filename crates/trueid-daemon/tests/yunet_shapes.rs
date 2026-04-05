@@ -1,4 +1,4 @@
-//! Inspect YuNet ONNX I/O (run with `cargo test -p trueid-daemon yunet_shapes -- --ignored --nocapture`).
+//! YuNet ONNX I/O probe (`--ignored`).
 #![cfg(test)]
 
 use std::path::PathBuf;

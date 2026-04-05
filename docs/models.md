@@ -1,8 +1,6 @@
-## Download required models
+## Models
 
-This project requires a face detector and an embedding model.
-
-> NOTE: This will be automated in a future update.
+Face detector + embedding ONNX files required.
 
 ### 1. Create models directory
 
@@ -30,9 +28,9 @@ https://huggingface.co/immich-app/buffalo_l/resolve/main/recognition/model.onnx
 ls ~/.local/share/trueid/models
 ```
 
-Expected files:
+Expected:
 
 ```
 face_detection_yunet_2023mar.onnx
-arcface.onnx
+face_embedding.onnx
 ```

@@ -8,7 +8,6 @@ pub enum DetectError {
     Failed(String),
 }
 
-/// Find a face in a frame. `None` if none found.
 pub trait FaceDetector: Send + Sync {
     fn detect_primary(&self, frame: &Frame) -> Result<Option<FaceDetection>, DetectError>;
 }

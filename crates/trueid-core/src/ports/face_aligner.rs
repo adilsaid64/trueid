@@ -8,7 +8,6 @@ pub enum AlignError {
     Failed(String),
 }
 
-/// Crop/warp to a standard face image for embed and liveness.
 pub trait FaceAligner: Send + Sync {
     fn align(&self, frame: &Frame, detection: &FaceDetection) -> Result<Frame, AlignError>;
 }

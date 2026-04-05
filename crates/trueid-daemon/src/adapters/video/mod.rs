@@ -1,5 +1,4 @@
-//! [`VideoSource`](trueid_core::ports::VideoSource): V4L device or in-memory test frames.
-//! [`CameraCapture`](trueid_core::ports::CameraCapture) adapters that compose them.
+//! V4L / mock `VideoSource` and `CameraCapture` adapters.
 
 mod camera_capture;
 mod mock;

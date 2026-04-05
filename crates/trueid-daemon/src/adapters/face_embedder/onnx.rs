@@ -1,6 +1,4 @@
-//! ONNX inference via tract.
-//!
-//! Input: float32 NCHW `[1,3,H,W]` or NHWC `[1,H,W,3]` (often 112×112).
+//! ONNX embedder (tract). NCHW or NHWC float input.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -10,7 +8,6 @@ use tract_onnx::prelude::*;
 use trueid_core::ports::{FaceEmbedError, FaceEmbedder};
 use trueid_core::{Embedding, Frame, PixelFormat};
 
-/// [`FaceEmbedder`] via ONNX.
 pub struct OnnxFaceEmbedder {
     model: std::sync::Mutex<TypedRunnableModel<TypedModel>>,
     layout: InputLayout,
@@ -89,7 +86,7 @@ fn interpret_input_shape(shape: &[usize]) -> Result<(InputLayout, usize, usize),
     }
 }
 
-/// `(rgb - 127.5) / 128.0` on 8-bit channels.
+/// Normalize uint8 RGB to [-1, 1].
 fn normalize_arcface_rgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     (
         (r - 127.5) / 128.0,
@@ -216,7 +213,7 @@ impl FaceEmbedder for OnnxFaceEmbedder {
     }
 }
 
-/// Load ONNX embedder from `model_path` (see `config.yaml` → `models.face_embedding`).
+/// Load from `models.face_embedding` path.
 pub fn build_face_embedder(model_path: &Path) -> Result<Arc<dyn FaceEmbedder>, String> {
     if !model_path.exists() {
         return Err(format!(

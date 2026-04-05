@@ -19,7 +19,7 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct LoggingConfig {
-    /// `tracing` filter level for the daemon (e.g. `info`, `debug`, `warn`).
+    /// Default `tracing` filter (e.g. `info`).
     pub level: String,
 }
 
@@ -39,9 +39,8 @@ pub struct CameraConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct V4lConfig {
-    /// Rotate each decoded RGB frame 180° (e.g. upside-down sensor with no EXIF).
     pub rotate_180: bool,
-    /// Vertical flip only; ignored if `rotate_180` is true.
+    /// Ignored when `rotate_180` is true.
     pub flip_vertical: bool,
 }
 
@@ -55,11 +54,8 @@ pub struct ModelsConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct PathsConfig {
-    /// Directory for per-user template JSON files.
     pub templates: String,
-    /// If set, save each aligned face as PNG under this directory (debug).
     pub debug_aligned_faces: Option<String>,
-    /// If set, each V4L capture writes decoded frames as PNGs under `{this}/rgb/…` and `{this}/ir/…`.
     pub debug_v4l_frames: Option<String>,
 }
 
@@ -70,15 +66,11 @@ pub struct VerificationConfig {
     pub fusion: ModalityFusionYaml,
 }
 
-/// RGB vs IR weights when both modalities are enrolled and both probes exist.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ModalityFusionYaml {
     pub weight_rgb: f32,
     pub weight_ir: f32,
-    /// If both modalities met template quorum → accept. Else accept if
-    /// `weight_rgb * s_rgb + weight_ir * s_ir >= fusion_threshold` with **actual** max best similarities
-    /// in \[0, 1\] (quorum does not bump scores to 1.0).
     pub fusion_threshold: f32,
 }
 

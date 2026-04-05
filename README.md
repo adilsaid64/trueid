@@ -1,12 +1,10 @@
 # trueid
-My attempt at building a biometric authentication module  for linux systems in Rust.  A Windows Hello like system for linux and an alternative to Howdy
 
-Still a WIP :) and open to contributions
-
+Linux face auth in Rust (PAM + daemon). Work in progress.
 
 * [Architecture](docs/architecture.md)
 * [Run / config](docs/developing.md)
-* [Model](docs/models.md)
+* [Models](docs/models.md)
 
 ## Install
 
@@ -34,4 +32,4 @@ cargo build --release
 
 ### IR Camera
 
-Your IR camera might not work straight a way. You need to configure it with this [linux-enable-ir-emitter](https://github.com/EmixamPP/linux-enable-ir-emitter)
+IR emitters often need [linux-enable-ir-emitter](https://github.com/EmixamPP/linux-enable-ir-emitter).

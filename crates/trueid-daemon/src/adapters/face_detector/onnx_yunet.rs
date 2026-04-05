@@ -1,7 +1,4 @@
-//! OpenCV Zoo [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) ONNX (`face_detection_yunet_2023mar.onnx`).
-//!
-//! Pre/postprocess matches OpenCV `FaceDetectorYN` (`face_detect.cpp`): BGR NCHW float 0–255,
-//! fixed input `1×3×640×640`, strides 8/16/32.
+//! [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) ONNX. BGR 640² NCHW; OpenCV-compatible decode.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -16,7 +13,6 @@ const DIVISOR: u32 = 32;
 const INPUT_W: u32 = 640;
 const INPUT_H: u32 = 640;
 
-/// YuNet with OpenCV-default thresholds.
 pub struct OnnxYuNetDetector {
     model: Mutex<TypedRunnableModel<TypedModel>>,
     score_threshold: f32,
@@ -278,7 +274,7 @@ fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, DetectError> {
     }
 }
 
-/// Map YuNet padded 640-space pixels to normalized coords vs original [`Frame`].
+/// Padded 640 input → normalized coords for source `Frame`.
 fn to_detection(candidate: &FaceCandidate, frame: &Frame) -> FaceDetection {
     let fw = frame.width as f32;
     let fh = frame.height as f32;
@@ -370,7 +366,7 @@ impl FaceDetector for OnnxYuNetDetector {
     }
 }
 
-/// Load YuNet ONNX from `model_path` (see `config.yaml` → `models.face_detector`).
+/// Load from `models.face_detector` path.
 pub fn build_face_detector(
     model_path: &std::path::Path,
 ) -> Result<std::sync::Arc<dyn FaceDetector>, String> {

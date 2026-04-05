@@ -9,7 +9,7 @@ use crate::ports::{
 
 use super::error::AppError;
 
-/// Warm-up and burst length for enroll vs verify.
+/// Enroll vs verify capture lengths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MultiFramePolicy {
     pub enroll: CaptureSpec,
@@ -25,11 +25,7 @@ impl Default for MultiFramePolicy {
     }
 }
 
-/// Weights and threshold for RGB+IR verify when both modalities are enrolled.
-///
-/// When both bursts have embeddings: **hard accept** if RGB and IR each met template quorum on some frame;
-/// otherwise accept if `weight_rgb * sim_rgb + weight_ir * sim_ir >= fusion_threshold` using max
-/// best-template similarity per modality (clamped to \[0, 1\]), not inflated to 1.0 when quorum is met.
+/// RGB/IR weights and fusion threshold when both template lists exist.
 #[derive(Debug, Clone, Copy)]
 pub struct ModalityFusionConfig {
     pub weight_rgb: f32,
@@ -47,13 +43,12 @@ impl Default for ModalityFusionConfig {
     }
 }
 
-/// Minimum number of templates that must match a single probe for that frame to count toward verify.
-/// This is ceil(n/2): e.g. 1→1, 2→1, 3→2, 4→2 (at least 50% of templates).
+/// Templates that must match one probe: ceil(n/2).
 fn template_quorum_required(template_count: usize) -> usize {
     template_count.div_ceil(2)
 }
 
-/// Wired dependencies for [`TrueIdApp`].
+/// [`TrueIdApp`] dependencies.
 pub struct TrueIdAppDeps {
     pub health: Arc<dyn Health>,
     pub camera: Arc<dyn CameraCapture>,
@@ -151,7 +146,7 @@ impl TrueIdApp {
         Ok(Some(emb))
     }
 
-    /// Best similarity vs templates and whether template quorum is met for this modality.
+    /// Max similarity vs templates and whether quorum holds.
     fn evaluate_probe_vs_templates(
         &self,
         probe: Option<&Embedding>,
@@ -178,8 +173,7 @@ impl TrueIdApp {
         (best_sim, quorum)
     }
 
-    /// Per-modality summary over a burst: max best-template similarity and whether **any** frame met quorum.
-    /// Does not pair RGB with IR by frame index.
+    /// Max similarity and any-frame quorum for one modality over a burst.
     fn aggregate_modality_for_verify(
         &self,
         probes: &[Option<Embedding>],
@@ -195,9 +189,7 @@ impl TrueIdApp {
         (max_best_sim, any_quorum)
     }
 
-    /// RGB-only, IR-only, or weighted fusion using **burst-level** aggregates (not per-frame RGB/IR pairs).
-    /// When both modalities are in play: hard accept only if **both** hit quorum; else fuse **raw** max
-    /// similarities (quorum does not map to 1.0). If one modality has no embeddings, falls back to the other.
+    /// RGB-only, IR-only, or weighted fusion from per-modality aggregates. Both quorums → accept; else weighted sims.
     fn fused_match_from_aggregates(
         &self,
         bundle: &TemplateBundle,
@@ -234,8 +226,7 @@ impl TrueIdApp {
         fusion.weight_rgb * sr + fusion.weight_ir * si >= fusion.fusion_threshold
     }
 
-    /// Detect → align → liveness → embed for each frame in one modality.
-    /// Verify combines streams using burst aggregates, not RGB[i] with IR[i].
+    /// Run `try_embed_from_frame` on each frame of one stream.
     fn modality_probes_from_frames(
         &self,
         frames: &[Frame],
@@ -360,21 +351,18 @@ impl TrueIdApp {
             has_rgb_probe,
             has_ir_probe,
             elapsed_ms = t_fuse.elapsed().as_millis(),
-            "verify: fusion (burst-level aggregates)"
+            "verify: fusion"
         );
 
         if accepted {
-            tracing::info!(
-                total_ms = t_fuse.elapsed().as_millis(),
-                "verify: accepted after fusion"
-            );
+            tracing::info!(total_ms = t_fuse.elapsed().as_millis(), "verify: accept");
             return Ok(true);
         }
         tracing::info!(
             total_ms = t_fuse.elapsed().as_millis(),
             rgb_templates = n_rgb,
             ir_templates = n_ir,
-            "verify: rejected (burst fusion / quorum)"
+            "verify: reject"
         );
         Ok(false)
     }
@@ -478,8 +466,7 @@ impl TrueIdApp {
         Ok(())
     }
 
-    /// Append a new template from a fresh capture (user must already be enrolled).
-    /// Existing templates are kept; verification accepts a probe if it matches any template.
+    /// Add templates from a new capture; user must already be enrolled.
     pub fn add_template(&self, user: &UserId) -> Result<(), AppError> {
         let span = tracing::info_span!("add_template", uid = user.0);
         let _g = span.enter();
@@ -598,7 +585,6 @@ mod tests {
         }
     }
 
-    /// RGB + IR bursts of equal length (for dual-modality fusion tests).
     struct TestCameraRgbIr;
     impl CameraCapture for TestCameraRgbIr {
         fn capture(&self, spec: CaptureSpec) -> Result<CapturedBurst, CaptureError> {
@@ -635,7 +621,6 @@ mod tests {
         }
     }
 
-    /// Treats the full frame as one face (development / tests only).
     struct FullFrameDetector;
 
     impl FaceDetector for FullFrameDetector {
@@ -721,8 +706,7 @@ mod tests {
         }
     }
 
-    /// RGB template (x≈1): `matches` true with low reported similarity. IR template (z≈1): no match, low sim.
-    /// Used to ensure fusion does not treat single-modality quorum as similarity 1.0.
+    /// Test matcher: high-x templates quorum with low similarity; others do not.
     struct AsymmetricWeakRgbMatcher;
     impl EmbeddingMatcher for AsymmetricWeakRgbMatcher {
         fn matches(&self, _probe: &Embedding, enrolled: &Embedding) -> bool {
@@ -878,7 +862,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_fusion_does_not_inflate_quorum_to_perfect_rgb_score() {
+    fn verify_fusion_weighted_score_ignores_quorum_as_one() {
         let probe = Embedding(vec![0.5, 0.5, 0.5]);
         let t_rgb = Embedding(vec![1.0, 0.0, 0.0]);
         let t_ir = Embedding(vec![0.0, 0.0, 1.0]);
@@ -900,7 +884,6 @@ mod tests {
             capture: MultiFramePolicy::default(),
             modality_fusion: ModalityFusionConfig::default(),
         });
-        // q_rgb true (weak), q_ir false; fused raw score 0.45*0.36 + 0.55*0.2 < 0.5 — must not bump RGB to 1.0.
         assert!(!app.verify(&UserId(7100)).unwrap());
     }
 

@@ -1,4 +1,4 @@
-//! [`Health`](trueid_core::ports::Health) adapters.
+//! `Health` adapters.
 
 mod default;
 

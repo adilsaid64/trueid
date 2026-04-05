@@ -1,4 +1,4 @@
-//! Face embedding: ONNX (`tract`) and test doubles.
+//! ONNX and test embedders.
 
 pub mod mock;
 pub mod onnx;

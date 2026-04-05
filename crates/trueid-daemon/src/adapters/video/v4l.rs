@@ -1,9 +1,4 @@
-//! V4L2 camera → RGB8 [`Frame`]s.
-//!
-//! Opens `/dev/video{N}` only during each capture burst, decodes MJPEG (EXIF orientation) or raw
-//! YUYV/grey, then optional rotate/flip from config (`camera.v4l`).
-//! For MJPEG, those fixes run only when EXIF orientation is `NoTransforms`; otherwise they
-//! would stack on top of EXIF and invert the image (e.g. upside-down aligned faces).
+//! V4L2 → `Frame`. MJPEG/YUYV/grey; optional rotate/flip from config. MJPEG + EXIF: sensor fix only when EXIF is identity.
 
 use std::io;
 use std::io::Cursor;
@@ -28,19 +23,12 @@ pub struct V4lVideoSource {
     height: u32,
     modality: StreamModality,
     pixel_fix: V4lPixelFix,
-    /// If set, write decoded frames as PNGs under `{root}/{rgb|ir}/burst_<nanos>/`.
     debug_frames_root: Option<PathBuf>,
-    /// Serializes bursts; the device fd is only held during `capture`.
     capture_lock: Mutex<()>,
 }
 
 impl V4lVideoSource {
-    /// `/dev/video{index}`, requested size `width` x `height`.
-    ///
-    /// Tries MJPEG, YUYV, then 8-bit grey (`GREY` / `Y800`). IR-only nodes often negotiate grey.
-    ///
-    /// Opens the device briefly to validate it, then closes it so nothing holds the camera until
-    /// the next [`VideoSource::capture`].
+    /// `/dev/video{index}`. Format: MJPEG, YUYV, or grey.
     pub fn open_with_dimensions(
         index: u32,
         width: u32,
@@ -105,7 +93,6 @@ fn save_frame_png(frame: &Frame, path: &Path) -> Result<(), io::Error> {
     Ok(())
 }
 
-/// Writes decoded frames (post-pipeline, same bytes the detector sees). Failures are logged only.
 fn maybe_dump_v4l_burst(root: Option<&Path>, modality: StreamModality, frames: &[Frame]) {
     let Some(root) = root else {
         return;
@@ -259,7 +246,6 @@ fn apply_optional_sensor_fix(
     Ok((out.into_raw(), w, h))
 }
 
-/// Returns `(rgb, w, h, skip_sensor_fix)` — last flag true when EXIF already oriented the JPEG.
 fn decode_mjpeg_apply_exif(payload: &[u8]) -> Result<(Vec<u8>, u32, u32, bool), CaptureError> {
     let mut decoder = ImageReader::with_format(Cursor::new(payload), ImageFormat::Jpeg)
         .into_decoder()

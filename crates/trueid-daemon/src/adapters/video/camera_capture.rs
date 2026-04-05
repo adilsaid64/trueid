@@ -1,8 +1,4 @@
-//! [`CameraCapture`] adapters built on top of [`VideoSource`].
-//!
-//! `RgbOnlyCameraCapture` wraps a single RGB source.
-//! `ParallelRgbIrCameraCapture` fires RGB and IR on two threads so the bursts overlap.
-//! No hardware sync — alignment is best-effort.
+//! `CameraCapture` over `VideoSource`: RGB-only or parallel RGB+IR (two threads).
 
 use std::sync::Arc;
 use std::thread;

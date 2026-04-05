@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use trueid_core::ports::{StoreError, TemplateStore};
 use trueid_core::{Embedding, TemplateBundle, UserId};
 
-/// On-disk JSON: `rgb` and `ir` embedding lists.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TemplateFile {
