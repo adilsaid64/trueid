@@ -4,6 +4,9 @@ Linux facial authentication system written in Rust.
 
 A Windows Hello–like experience for Linux, with support for RGB and optional IR cameras.
 
+Project is still a work in progress and open to contributions :)
+
+
 ## Components
 
 `trueid` is composed of three core components:
