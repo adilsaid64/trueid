@@ -21,6 +21,8 @@ models:
 paths:
   templates: /var/lib/trueid/templates
   # debug_aligned_faces: /tmp/trueid-aligned
+  # Decoded V4L output (PNG per frame): rgb/ and ir/ subdirs, one folder per burst.
+  # debug_v4l_frames: /tmp/trueid-v4l
 
 verification:
   match_threshold: 0.70

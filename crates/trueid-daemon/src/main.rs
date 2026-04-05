@@ -36,6 +36,12 @@ fn main() -> std::io::Result<()> {
     let cap_h = cfg.camera.height;
     let v4l_rotate = cfg.camera.v4l.rotate_180;
     let v4l_flip = cfg.camera.v4l.flip_vertical;
+    let debug_v4l = cfg
+        .paths
+        .debug_v4l_frames
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
 
     let video_rgb: Arc<dyn trueid_core::ports::VideoSource> = if cfg.camera.mock {
         Arc::new(adapters::MockVideoSource::default_gray())
@@ -49,6 +55,7 @@ fn main() -> std::io::Result<()> {
                 StreamModality::Rgb,
                 v4l_rotate,
                 v4l_flip,
+                debug_v4l.clone(),
             )
             .map_err(|e| {
                 std::io::Error::other(format!(
@@ -72,6 +79,7 @@ fn main() -> std::io::Result<()> {
                     StreamModality::Ir,
                     v4l_rotate,
                     v4l_flip,
+                    debug_v4l.clone(),
                 )
                 .map_err(|e| {
                     std::io::Error::other(format!("IR camera open failed (index {index}): {e}"))

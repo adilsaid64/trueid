@@ -24,6 +24,8 @@ cargo run -p trueid-daemon
 
 Real camera + ONNX models: point `models.face_embedding` and `models.face_detector` at your `.onnx` files (defaults assume `/var/lib/trueid/models/...`).
 
+To inspect decoded V4L output (RGB as colour PNG, IR as greyscale PNG), set `paths.debug_v4l_frames` to a directory; each burst creates `rgb/burst_<nanos>/frame_*.png` and, when IR is enabled, `ir/burst_<nanos>/…`.
+
 ## CLI
 
 Another terminal:

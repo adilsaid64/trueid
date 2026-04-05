@@ -59,6 +59,8 @@ pub struct PathsConfig {
     pub templates: String,
     /// If set, save each aligned face as PNG under this directory (debug).
     pub debug_aligned_faces: Option<String>,
+    /// If set, each V4L capture writes decoded frames as PNGs under `{this}/rgb/…` and `{this}/ir/…`.
+    pub debug_v4l_frames: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -111,6 +113,7 @@ impl Default for PathsConfig {
         Self {
             templates: "/var/lib/trueid/templates".to_string(),
             debug_aligned_faces: None,
+            debug_v4l_frames: None,
         }
     }
 }

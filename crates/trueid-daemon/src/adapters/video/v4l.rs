@@ -7,12 +7,13 @@
 
 use std::io;
 use std::io::Cursor;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use image::imageops;
 use image::metadata::Orientation;
-use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage};
+use image::{DynamicImage, GrayImage, ImageDecoder, ImageFormat, ImageReader, RgbImage};
 use trueid_core::ports::{CaptureError, CaptureSpec, VideoSource};
 use trueid_core::{Frame, PixelFormat, StreamModality};
 use v4l::buffer::Type;
@@ -27,6 +28,8 @@ pub struct V4lVideoSource {
     height: u32,
     modality: StreamModality,
     pixel_fix: V4lPixelFix,
+    /// If set, write decoded frames as PNGs under `{root}/{rgb|ir}/burst_<nanos>/`.
+    debug_frames_root: Option<PathBuf>,
     /// Serializes bursts; the device fd is only held during `capture`.
     capture_lock: Mutex<()>,
 }
@@ -45,6 +48,7 @@ impl V4lVideoSource {
         modality: StreamModality,
         rotate_180: bool,
         flip_vertical: bool,
+        debug_frames_root: Option<PathBuf>,
     ) -> Result<Self, CaptureError> {
         let dev = Device::new(index as usize).map_err(io_to_capture)?;
         let _active = negotiate_format(&dev, width, height, modality)?;
@@ -71,9 +75,71 @@ impl V4lVideoSource {
             height,
             modality,
             pixel_fix,
+            debug_frames_root,
             capture_lock: Mutex::new(()),
         })
     }
+}
+
+fn modality_subdir(m: StreamModality) -> &'static str {
+    match m {
+        StreamModality::Rgb => "rgb",
+        StreamModality::Ir => "ir",
+    }
+}
+
+fn save_frame_png(frame: &Frame, path: &Path) -> Result<(), io::Error> {
+    let map_img = |e: image::ImageError| io::Error::other(e.to_string());
+    match frame.format {
+        PixelFormat::Rgb8 => {
+            let img = RgbImage::from_raw(frame.width, frame.height, frame.bytes.clone())
+                .ok_or_else(|| io::Error::other("debug v4l: invalid rgb8 dimensions"))?;
+            img.save(path).map_err(map_img)?;
+        }
+        PixelFormat::Gray8 => {
+            let img = GrayImage::from_raw(frame.width, frame.height, frame.bytes.clone())
+                .ok_or_else(|| io::Error::other("debug v4l: invalid gray8 dimensions"))?;
+            img.save(path).map_err(map_img)?;
+        }
+    }
+    Ok(())
+}
+
+/// Writes decoded frames (post-pipeline, same bytes the detector sees). Failures are logged only.
+fn maybe_dump_v4l_burst(root: Option<&Path>, modality: StreamModality, frames: &[Frame]) {
+    let Some(root) = root else {
+        return;
+    };
+    if frames.is_empty() {
+        return;
+    }
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let burst_dir = root
+        .join(modality_subdir(modality))
+        .join(format!("burst_{nanos}"));
+    if let Err(e) = std::fs::create_dir_all(&burst_dir) {
+        tracing::warn!(error = %e, dir = %burst_dir.display(), "v4l debug: mkdir failed");
+        return;
+    }
+    for (i, frame) in frames.iter().enumerate() {
+        let path = burst_dir.join(format!("frame_{i:03}.png"));
+        if let Err(e) = save_frame_png(frame, &path) {
+            tracing::warn!(
+                error = %e,
+                path = %path.display(),
+                "v4l debug: save png failed"
+            );
+        }
+    }
+    tracing::info!(
+        dir = %burst_dir.display(),
+        frames = frames.len(),
+        ?modality,
+        "v4l: debug frames written"
+    );
 }
 
 fn negotiate_format(
@@ -364,6 +430,7 @@ impl VideoSource for V4lVideoSource {
             elapsed_ms = t0.elapsed().as_millis(),
             "v4l: capture done"
         );
+        maybe_dump_v4l_burst(self.debug_frames_root.as_deref(), self.modality, &frames);
         Ok(frames)
     }
 }
