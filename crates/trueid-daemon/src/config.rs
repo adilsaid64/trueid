@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 const SYSTEM_CONFIG: &str = "/etc/trueid/config.yaml";
 const BUNDLED_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/config/config.yaml");
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub logging: LoggingConfig,
@@ -36,7 +36,7 @@ pub struct CameraConfig {
     pub v4l: V4lConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct V4lConfig {
     /// Rotate each decoded RGB frame 180° (e.g. upside-down sensor with no EXIF).
@@ -67,7 +67,7 @@ pub struct VerificationConfig {
     pub match_threshold: f32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct DevelopmentConfig {
     pub mock_embedder: bool,
@@ -97,15 +97,6 @@ impl Default for CameraConfig {
     }
 }
 
-impl Default for V4lConfig {
-    fn default() -> Self {
-        Self {
-            rotate_180: false,
-            flip_vertical: false,
-        }
-    }
-}
-
 impl Default for ModelsConfig {
     fn default() -> Self {
         Self {
@@ -128,29 +119,6 @@ impl Default for VerificationConfig {
     fn default() -> Self {
         Self {
             match_threshold: 0.70,
-        }
-    }
-}
-
-impl Default for DevelopmentConfig {
-    fn default() -> Self {
-        Self {
-            mock_embedder: false,
-            mock_detector: false,
-            passthrough_aligner: false,
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            logging: LoggingConfig::default(),
-            camera: CameraConfig::default(),
-            models: ModelsConfig::default(),
-            paths: PathsConfig::default(),
-            verification: VerificationConfig::default(),
-            development: DevelopmentConfig::default(),
         }
     }
 }
