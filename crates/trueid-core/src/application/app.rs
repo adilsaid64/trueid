@@ -221,6 +221,10 @@ impl TrueIdApp {
             return true;
         }
 
+        if !q_r && !q_i {
+            return false;
+        }
+
         let sr = sim_r.clamp(0.0, 1.0);
         let si = sim_i.clamp(0.0, 1.0);
         fusion.weight_rgb * sr + fusion.weight_ir * si >= fusion.fusion_threshold
