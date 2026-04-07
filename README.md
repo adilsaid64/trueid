@@ -46,7 +46,7 @@ cd trueid
 cargo build --release
 ```
 
-## IR Camera
+## IR camera
 
 If you're using a Windows Hello–compatible device or any camera with IR support, you may need to enable the IR emitter with [linux-enable-ir-emitter](https://github.com/EmixamPP/linux-enable-ir-emitter)
 
@@ -54,14 +54,14 @@ If you're using a Windows Hello–compatible device or any camera with IR suppor
 
 After installaion
 
-### 1. Download ML Models
+### 1. Download ML models
 Download embedding and face detection models first.
 
 ```bash
 sudo trueid-ctl get-models
 ```
 
-### 2. Edit Config
+### 2. Edit config
 By default, IR is disabled. You may also need to adjust the video device indices for your RGB and IR cameras.
 
 Typical defaults:
@@ -83,7 +83,7 @@ You can find the `uid` you should use by running  `id -u`
 sudo trueid-ctl enroll --uid 1000
 ```
 
-### 4. Test Verify
+### 4. Test verify
 
 ```bash
 sudo trueid-ctl verify --uid 1000
@@ -97,3 +97,10 @@ sudo trueid-ctl add-template --uid 1000
 ```
 
 
+## PAM integreation
+
+Add this line to the PAM service you want to enable trueid for:
+
+```
+auth    [success=1 default=ignore] pam_trueid.so
+```
