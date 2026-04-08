@@ -27,6 +27,7 @@ pub struct LoggingConfig {
 #[serde(default)]
 pub struct CameraConfig {
     pub rgb_index: u32,
+    pub enable_rgb: bool,
     pub ir_index: u32,
     pub enable_ir: bool,
     pub width: u32,
@@ -105,6 +106,7 @@ impl Default for CameraConfig {
         Self {
             rgb_index: 0,
             ir_index: 2,
+            enable_rgb: true,
             enable_ir: false,
             width: 640,
             height: 480,
