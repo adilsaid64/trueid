@@ -19,8 +19,16 @@ impl TemplateBundle {
         self.rgb.is_empty() && self.ir.is_empty()
     }
 
+    pub fn has_any_enrollment(&self) -> bool {
+        !self.is_empty()
+    }
+
     pub fn has_rgb_enrollment(&self) -> bool {
         !self.rgb.is_empty()
+    }
+
+    pub fn has_ir_enrollment(&self) -> bool {
+        !self.ir.is_empty()
     }
 }
 

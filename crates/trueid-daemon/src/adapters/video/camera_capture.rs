@@ -18,7 +18,30 @@ impl RgbOnlyCameraCapture {
 impl CameraCapture for RgbOnlyCameraCapture {
     fn capture(&self, spec: CaptureSpec) -> Result<CapturedBurst, CaptureError> {
         let rgb = self.rgb.capture(spec)?;
-        Ok(CapturedBurst { rgb, ir: None })
+        Ok(CapturedBurst {
+            rgb: Some(rgb),
+            ir: None,
+        })
+    }
+}
+
+pub struct IROnlyCameraCapture {
+    ir: Arc<dyn VideoSource>,
+}
+
+impl IROnlyCameraCapture {
+    pub fn new(ir: Arc<dyn VideoSource>) -> Self {
+        Self { ir }
+    }
+}
+
+impl CameraCapture for IROnlyCameraCapture {
+    fn capture(&self, spec: CaptureSpec) -> Result<CapturedBurst, CaptureError> {
+        let ir = self.ir.capture(spec)?;
+        Ok(CapturedBurst {
+            rgb: None,
+            ir: Some(ir),
+        })
     }
 }
 
@@ -44,7 +67,10 @@ impl CameraCapture for ParallelRgbIrCameraCapture {
             let ir = h_ir
                 .join()
                 .map_err(|_| CaptureError::Failed("IR capture thread panicked".into()))??;
-            Ok(CapturedBurst { rgb, ir: Some(ir) })
+            Ok(CapturedBurst {
+                rgb: Some(rgb),
+                ir: Some(ir),
+            })
         })
     }
 }

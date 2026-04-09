@@ -48,7 +48,7 @@ pub trait VideoSource: Send + Sync {
 
 /// One burst; `ir` absent without IR hardware. Streams not frame-synced.
 pub struct CapturedBurst {
-    pub rgb: Vec<Frame>,
+    pub rgb: Option<Vec<Frame>>,
     pub ir: Option<Vec<Frame>>,
 }
 

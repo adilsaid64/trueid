@@ -276,47 +276,63 @@ impl TrueIdApp {
 
         let t_cap = Instant::now();
         let burst = self.camera.capture(spec)?;
+        let frames_rgb = burst.rgb;
+        let frames_ir = burst.ir;
+
         tracing::info!(
-            returned = burst.rgb.len(),
-            has_ir = burst.ir.is_some(),
+            rgb_frames = frames_rgb.as_ref().map_or(0, |v| v.len()),
+            ir_frames = frames_ir.as_ref().map_or(0, |v| v.len()),
             capture_ms = t_cap.elapsed().as_millis(),
             "verify: frames from camera"
         );
-        let frames_rgb = burst.rgb;
-        let frames_ir = burst.ir;
 
         let Some(bundle) = self.template_store.load_all(user)? else {
             return Err(crate::domain::error::DomainError::NoEnrolledTemplate.into());
         };
-        if !bundle.has_rgb_enrollment() {
+        if bundle.is_empty() {
             return Err(crate::domain::error::DomainError::NoEnrolledTemplate.into());
         }
         let n_rgb = bundle.rgb.len();
         let n_ir = bundle.ir.len();
-        let req_rgb = template_quorum_required(n_rgb);
+        let req_rgb = if n_rgb > 0 {
+            template_quorum_required(n_rgb)
+        } else {
+            0
+        };
         let req_ir = if n_ir > 0 {
             template_quorum_required(n_ir)
         } else {
             0
         };
+
         tracing::info!(
             rgb_templates = n_rgb,
             ir_templates = n_ir,
             rgb_quorum = req_rgb,
             ir_quorum = req_ir,
             fusion = ?self.modality_fusion,
-            template_dim = bundle.rgb[0].0.len(),
+            template_dim = bundle
+                .rgb
+                .first()
+                .or_else(|| bundle.ir.first())
+                .map(|e| e.0.len())
+                .unwrap_or(0),
             "verify: templates loaded"
         );
 
-        let t_rgb = Instant::now();
-        let probes_rgb = self.modality_probes_from_frames(&frames_rgb, "verify_rgb")?;
-        tracing::info!(
-            frames = probes_rgb.len(),
-            with_embedding = probes_rgb.iter().filter(|p| p.is_some()).count(),
-            elapsed_ms = t_rgb.elapsed().as_millis(),
-            "verify: RGB burst processed"
-        );
+        let probes_rgb = if let Some(ref rgb_frames) = frames_rgb {
+            let t_rgb = Instant::now();
+            let p = self.modality_probes_from_frames(rgb_frames, "verify_rgb")?;
+            tracing::info!(
+                frames = p.len(),
+                with_embedding = p.iter().filter(|x| x.is_some()).count(),
+                elapsed_ms = t_rgb.elapsed().as_millis(),
+                "verify: RGB burst processed"
+            );
+            Some(p)
+        } else {
+            None
+        };
 
         let probes_ir = if let Some(ref ir_frames) = frames_ir {
             let t_ir = Instant::now();
@@ -333,12 +349,21 @@ impl TrueIdApp {
         };
 
         let t_fuse = Instant::now();
-        let agg_rgb = self.aggregate_modality_for_verify(&probes_rgb, &bundle.rgb);
+
+        let agg_rgb = match probes_rgb.as_deref() {
+            Some(rgb) if !rgb.is_empty() => self.aggregate_modality_for_verify(rgb, &bundle.rgb),
+            _ => (0.0f32, false),
+        };
+
         let agg_ir = match probes_ir.as_deref() {
             Some(ir) if !ir.is_empty() => self.aggregate_modality_for_verify(ir, &bundle.ir),
             _ => (0.0f32, false),
         };
-        let has_rgb_probe = probes_rgb.iter().any(|p| p.is_some());
+
+        let has_rgb_probe = probes_rgb
+            .as_ref()
+            .is_some_and(|v| v.iter().any(|p| p.is_some()));
+
         let has_ir_probe = probes_ir
             .as_ref()
             .is_some_and(|v| v.iter().any(|p| p.is_some()));
@@ -407,7 +432,7 @@ impl TrueIdApp {
         if self
             .template_store
             .load_all(user)?
-            .is_some_and(|b| b.has_rgb_enrollment())
+            .is_some_and(|b| b.has_any_enrollment())
         {
             return Err(crate::domain::error::DomainError::AlreadyEnrolled.into());
         }
@@ -422,28 +447,38 @@ impl TrueIdApp {
         let t_cap = Instant::now();
         let burst = self.camera.capture(spec)?;
         tracing::info!(
-            returned = burst.rgb.len(),
+            rgb_returned = burst.rgb.as_ref().map_or(0, |v| v.len()),
             has_ir = burst.ir.is_some(),
             capture_ms = t_cap.elapsed().as_millis(),
             "enroll: frames from camera"
         );
-        let frames_rgb = burst.rgb;
-        let frames_ir = burst.ir;
+        let frames_rgb = burst.rgb.unwrap_or_default();
+        let frames_ir = burst.ir.unwrap_or_default();
 
-        let embeddings_rgb = self.collect_embeddings(&frames_rgb, "enroll")?;
-        let embeddings_ir = if let Some(ref ir) = frames_ir {
-            self.collect_embeddings(ir, "enroll_ir")?
-        } else {
+        let embeddings_rgb = if frames_rgb.is_empty() {
             Vec::new()
+        } else {
+            self.collect_embeddings(&frames_rgb, "enroll_rgb")?
+        };
+        let embeddings_ir = if frames_ir.is_empty() {
+            Vec::new()
+        } else {
+            self.collect_embeddings(&frames_ir, "enroll_ir")?
         };
 
-        if embeddings_rgb.is_empty() {
-            tracing::warn!("enroll: no usable RGB embeddings from any frame");
+        if embeddings_rgb.is_empty() && embeddings_ir.is_empty() {
+            tracing::warn!("enroll: no usable embeddings from any frame");
             return Err(crate::domain::error::DomainError::NoUsableFaceInCapture.into());
         }
 
-        let template_rgb = crate::domain::Embedding::try_average(&embeddings_rgb)
-            .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
+        let template_rgb = if embeddings_rgb.is_empty() {
+            None
+        } else {
+            Some(
+                crate::domain::Embedding::try_average(&embeddings_rgb)
+                    .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?,
+            )
+        };
         let template_ir = if embeddings_ir.is_empty() {
             None
         } else {
@@ -456,15 +491,18 @@ impl TrueIdApp {
         tracing::info!(
             from_rgb_frames = embeddings_rgb.len(),
             from_ir_frames = embeddings_ir.len(),
-            template_dim = template_rgb.0.len(),
-            has_ir_template = template_ir.is_some(),
+            rgb_template_dim = template_rgb.as_ref().map(|t| t.0.len()).unwrap_or(0),
+            ir_template_dim = template_ir.as_ref().map(|t| t.0.len()).unwrap_or(0),
             "enroll: templates averaged"
         );
 
-        let bundle = TemplateBundle {
-            rgb: vec![template_rgb],
-            ir: template_ir.into_iter().collect(),
-        };
+        let mut bundle = TemplateBundle::empty();
+        if let Some(t) = template_rgb {
+            bundle.rgb.push(t);
+        }
+        if let Some(t) = template_ir {
+            bundle.ir.push(t);
+        }
         self.template_store.save_all(user, &bundle)?;
         tracing::info!("enroll: stored ok");
         Ok(())
@@ -483,7 +521,7 @@ impl TrueIdApp {
         let mut bundle = self
             .template_store
             .load_all(user)?
-            .filter(|b| b.has_rgb_enrollment())
+            .filter(|b| b.has_any_enrollment())
             .ok_or(crate::domain::error::DomainError::NoEnrolledTemplate)?;
         tracing::debug!(
             existing_rgb = bundle.rgb.len(),
@@ -501,27 +539,35 @@ impl TrueIdApp {
         let t_cap = Instant::now();
         let burst = self.camera.capture(spec)?;
         tracing::info!(
-            returned = burst.rgb.len(),
+            rgb_returned = burst.rgb.as_ref().map_or(0, |v| v.len()),
             has_ir = burst.ir.is_some(),
             capture_ms = t_cap.elapsed().as_millis(),
             "add_template: frames from camera"
         );
 
-        let embeddings_rgb = self.collect_embeddings(&burst.rgb, "add_template")?;
-        let embeddings_ir = if let Some(ref ir) = burst.ir {
-            self.collect_embeddings(ir, "add_template_ir")?
-        } else {
-            Vec::new()
+        let embeddings_rgb = match burst.rgb.as_deref() {
+            Some(frames) if !frames.is_empty() => {
+                self.collect_embeddings(frames, "add_template_rgb")?
+            }
+            _ => Vec::new(),
+        };
+        let embeddings_ir = match burst.ir.as_deref() {
+            Some(frames) if !frames.is_empty() => {
+                self.collect_embeddings(frames, "add_template_ir")?
+            }
+            _ => Vec::new(),
         };
 
-        if embeddings_rgb.is_empty() {
-            tracing::warn!("add_template: no usable RGB embeddings from any frame");
+        if embeddings_rgb.is_empty() && embeddings_ir.is_empty() {
+            tracing::warn!("add_template: no usable embeddings from any frame");
             return Err(crate::domain::error::DomainError::NoUsableFaceInCapture.into());
         }
 
-        let new_rgb = crate::domain::Embedding::try_average(&embeddings_rgb)
-            .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
-        bundle.rgb.push(new_rgb);
+        if !embeddings_rgb.is_empty() {
+            let new_rgb = crate::domain::Embedding::try_average(&embeddings_rgb)
+                .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
+            bundle.rgb.push(new_rgb);
+        }
 
         if !embeddings_ir.is_empty() {
             let new_ir = crate::domain::Embedding::try_average(&embeddings_ir)
@@ -583,7 +629,7 @@ mod tests {
                 bytes: vec![0],
             };
             Ok(CapturedBurst {
-                rgb: vec![f; spec.frame_count as usize],
+                rgb: Some(vec![f; spec.frame_count as usize]),
                 ir: None,
             })
         }
@@ -609,7 +655,7 @@ mod tests {
                 bytes: vec![1],
             };
             Ok(CapturedBurst {
-                rgb: vec![rgb; n],
+                rgb: Some(vec![rgb; n]),
                 ir: Some(vec![ir; n]),
             })
         }
