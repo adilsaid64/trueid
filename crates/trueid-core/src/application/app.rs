@@ -441,7 +441,11 @@ impl TrueIdApp {
         }
     }
 
-    fn add_template_batch(&self, user: &UserId, mut bundle: TemplateBundle) -> Result<(), AppError> {
+    fn add_template_batch(
+        &self,
+        user: &UserId,
+        mut bundle: TemplateBundle,
+    ) -> Result<(), AppError> {
         let spec = self.capture.enroll.validate()?;
         tracing::info!(
             warmup_discard = spec.warmup_discard,
