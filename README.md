@@ -7,15 +7,17 @@ A Windows Hello–like experience for Linux, with support for RGB and optional I
 Project is still a work in progress and open to contributions :)
 
 ## Features I want to add next
-- Streaming: Current pipeline captures `x` frames, and does inference, then decision. I would like to add the ability for streaming, so we 
+- Streaming inference. Current pipeline captures `x` frames, and does inference, then decision. I would like to add the ability for streaming, so we 
     - `capture -> frame -> inference -> repeat x times -> decision` 
     - rather than `capture x frames -> inference -> decision`
 
-- Better liveliness detector: Currently anything passes liveliness, but I think the streaming inference mode will help improve that
+- Better liveliness detector. Currently anything passes liveliness, but I think the streaming inference mode will help improve that
 
 - Extend the CLI tool to make it easier for people to delete templates, and change config etc
 
-- Storing embeddings as encrypted rather than raw jsons
+- Storing embeddings as encrypted files rather than raw jsons
+
+- Maybe some UX, look notifications, or UI, maybe...still undecided
 
 ## Components
 
@@ -59,6 +61,24 @@ cargo build --release
 ## IR camera
 
 If you're using a Windows Hello–compatible device or any camera with IR support, you may need to enable the IR emitter with [linux-enable-ir-emitter](https://github.com/EmixamPP/linux-enable-ir-emitter)
+
+You can test if your IR emitter works like this:
+
+1. List your current connected devices
+
+```
+ls /dev/video*
+```
+
+You should see something like this `/dev/video0  /dev/video1  /dev/video2  /dev/video3`
+
+Typically dev0 is your RGB index, and dev2 is the IR one. But you can double check by playing each one.
+
+```
+ffplay /dev/video2
+```
+
+If your IR emitter is working correctly, it should be flashing red continuously.
 
 ## Usage
 
