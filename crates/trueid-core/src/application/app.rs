@@ -8,6 +8,10 @@ use crate::ports::{
 };
 
 use super::error::AppError;
+use super::pipeline::{EnrollPipelineMode, VerifyPipelineMode};
+use super::verification_decision::{VerificationDecider, template_quorum_required};
+
+pub use super::verification_decision::ModalityFusionConfig;
 
 /// Enroll vs verify capture lengths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,29 +29,6 @@ impl Default for MultiFramePolicy {
     }
 }
 
-/// RGB/IR weights and fusion threshold when both template lists exist.
-#[derive(Debug, Clone, Copy)]
-pub struct ModalityFusionConfig {
-    pub weight_rgb: f32,
-    pub weight_ir: f32,
-    pub fusion_threshold: f32,
-}
-
-impl Default for ModalityFusionConfig {
-    fn default() -> Self {
-        Self {
-            weight_rgb: 0.45,
-            weight_ir: 0.55,
-            fusion_threshold: 0.5,
-        }
-    }
-}
-
-/// Templates that must match one probe: ceil(n/2).
-fn template_quorum_required(template_count: usize) -> usize {
-    template_count.div_ceil(2)
-}
-
 /// [`TrueIdApp`] dependencies.
 pub struct TrueIdAppDeps {
     pub health: Arc<dyn Health>,
@@ -60,6 +41,8 @@ pub struct TrueIdAppDeps {
     pub matcher: Arc<dyn EmbeddingMatcher>,
     pub capture: MultiFramePolicy,
     pub modality_fusion: ModalityFusionConfig,
+    pub enroll_pipeline: EnrollPipelineMode,
+    pub verify_pipeline: VerifyPipelineMode,
 }
 
 pub struct TrueIdApp {
@@ -70,9 +53,10 @@ pub struct TrueIdApp {
     liveness: Arc<dyn LivenessChecker>,
     face_embedder: Arc<dyn FaceEmbedder>,
     template_store: Arc<dyn TemplateStore>,
-    matcher: Arc<dyn EmbeddingMatcher>,
+    verification: VerificationDecider,
     capture: MultiFramePolicy,
-    modality_fusion: ModalityFusionConfig,
+    enroll_pipeline: EnrollPipelineMode,
+    verify_pipeline: VerifyPipelineMode,
 }
 
 impl TrueIdApp {
@@ -85,13 +69,16 @@ impl TrueIdApp {
             liveness: deps.liveness,
             face_embedder: deps.face_embedder,
             template_store: deps.template_store,
-            matcher: deps.matcher,
+            verification: VerificationDecider::new(deps.matcher.clone(), deps.modality_fusion),
             capture: deps.capture,
-            modality_fusion: deps.modality_fusion,
+            enroll_pipeline: deps.enroll_pipeline,
+            verify_pipeline: deps.verify_pipeline,
         }
     }
 
     /// Detect → align → liveness → embed. `None` if skipped (no face, not live, etc.).
+    ///
+    /// Single supported path from a captured `Frame` to an embedding (batch and future streaming).
     fn try_embed_from_frame(&self, frame: &Frame) -> Result<Option<Embedding>, AppError> {
         let t0 = Instant::now();
         let Some(det) = self.detector.detect_primary(frame)? else {
@@ -146,91 +133,7 @@ impl TrueIdApp {
         Ok(Some(emb))
     }
 
-    /// Max similarity vs templates and whether quorum holds.
-    fn evaluate_probe_vs_templates(
-        &self,
-        probe: Option<&Embedding>,
-        templates: &[Embedding],
-    ) -> (f32, bool) {
-        let Some(p) = probe else {
-            return (0.0, false);
-        };
-        if templates.is_empty() {
-            return (0.0, false);
-        }
-        let required = template_quorum_required(templates.len());
-        let mut pass_count = 0usize;
-        let mut best_sim = 0.0f32;
-        for t in templates {
-            if let Some(s) = self.matcher.similarity(p, t) {
-                best_sim = best_sim.max(s);
-            }
-            if self.matcher.matches(p, t) {
-                pass_count += 1;
-            }
-        }
-        let quorum = pass_count >= required;
-        (best_sim, quorum)
-    }
-
-    /// Max similarity and any-frame quorum for one modality over a burst.
-    fn aggregate_modality_for_verify(
-        &self,
-        probes: &[Option<Embedding>],
-        templates: &[Embedding],
-    ) -> (f32, bool) {
-        let mut any_quorum = false;
-        let mut max_best_sim = 0.0f32;
-        for p in probes {
-            let (sim, q) = self.evaluate_probe_vs_templates(p.as_ref(), templates);
-            max_best_sim = max_best_sim.max(sim);
-            any_quorum |= q;
-        }
-        (max_best_sim, any_quorum)
-    }
-
-    /// RGB-only, IR-only, or weighted fusion from per-modality aggregates. Both quorums → accept; else weighted sims.
-    fn fused_match_from_aggregates(
-        &self,
-        bundle: &TemplateBundle,
-        (sim_r, q_r): (f32, bool),
-        (sim_i, q_i): (f32, bool),
-        has_r: bool,
-        has_i: bool,
-    ) -> bool {
-        let fusion = self.modality_fusion;
-
-        if bundle.ir.is_empty() {
-            return q_r;
-        }
-        if bundle.rgb.is_empty() {
-            return q_i;
-        }
-
-        if !has_r && !has_i {
-            return false;
-        }
-        if !has_r && has_i {
-            return q_i;
-        }
-        if has_r && !has_i {
-            return q_r;
-        }
-
-        if q_r && q_i {
-            return true;
-        }
-
-        if !q_r && !q_i {
-            return false;
-        }
-
-        let sr = sim_r.clamp(0.0, 1.0);
-        let si = sim_i.clamp(0.0, 1.0);
-        fusion.weight_rgb * sr + fusion.weight_ir * si >= fusion.fusion_threshold
-    }
-
-    /// Run `try_embed_from_frame` on each frame of one stream.
+    /// Run `try_embed_from_frame` on each frame of one stream (batch path; streaming can reuse the same step per frame).
     fn modality_probes_from_frames(
         &self,
         frames: &[Frame],
@@ -267,6 +170,15 @@ impl TrueIdApp {
             HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
         }
 
+        match self.verify_pipeline {
+            VerifyPipelineMode::Batch => self.verify_batch(user),
+            VerifyPipelineMode::Streaming => Err(AppError::PipelineNotImplemented(
+                "verify: streaming pipeline not implemented yet",
+            )),
+        }
+    }
+
+    fn verify_batch(&self, user: &UserId) -> Result<bool, AppError> {
         let spec = self.capture.verify.validate()?;
         tracing::info!(
             warmup_discard = spec.warmup_discard,
@@ -310,7 +222,7 @@ impl TrueIdApp {
             ir_templates = n_ir,
             rgb_quorum = req_rgb,
             ir_quorum = req_ir,
-            fusion = ?self.modality_fusion,
+            fusion = ?self.verification.modality_fusion(),
             template_dim = bundle
                 .rgb
                 .first()
@@ -350,40 +262,23 @@ impl TrueIdApp {
 
         let t_fuse = Instant::now();
 
-        let agg_rgb = match probes_rgb.as_deref() {
-            Some(rgb) if !rgb.is_empty() => self.aggregate_modality_for_verify(rgb, &bundle.rgb),
-            _ => (0.0f32, false),
-        };
-
-        let agg_ir = match probes_ir.as_deref() {
-            Some(ir) if !ir.is_empty() => self.aggregate_modality_for_verify(ir, &bundle.ir),
-            _ => (0.0f32, false),
-        };
-
-        let has_rgb_probe = probes_rgb
-            .as_ref()
-            .is_some_and(|v| v.iter().any(|p| p.is_some()));
-
-        let has_ir_probe = probes_ir
-            .as_ref()
-            .is_some_and(|v| v.iter().any(|p| p.is_some()));
-
-        let accepted =
-            self.fused_match_from_aggregates(&bundle, agg_rgb, agg_ir, has_rgb_probe, has_ir_probe);
+        let outcome =
+            self.verification
+                .verify_burst(&bundle, probes_rgb.as_deref(), probes_ir.as_deref());
 
         tracing::info!(
-            accepted,
-            rgb_quorum = agg_rgb.1,
-            ir_quorum = agg_ir.1,
-            best_sim_rgb = agg_rgb.0,
-            best_sim_ir = agg_ir.0,
-            has_rgb_probe,
-            has_ir_probe,
+            accepted = outcome.accepted,
+            rgb_quorum = outcome.rgb_quorum,
+            ir_quorum = outcome.ir_quorum,
+            best_sim_rgb = outcome.best_sim_rgb,
+            best_sim_ir = outcome.best_sim_ir,
+            has_rgb_probe = outcome.has_rgb_probe,
+            has_ir_probe = outcome.has_ir_probe,
             elapsed_ms = t_fuse.elapsed().as_millis(),
             "verify: fusion"
         );
 
-        if accepted {
+        if outcome.accepted {
             tracing::info!(total_ms = t_fuse.elapsed().as_millis(), "verify: accept");
             return Ok(true);
         }
@@ -394,30 +289,6 @@ impl TrueIdApp {
             "verify: reject"
         );
         Ok(false)
-    }
-
-    fn collect_embeddings(
-        &self,
-        frames: &[Frame],
-        log_ctx: &'static str,
-    ) -> Result<Vec<Embedding>, AppError> {
-        let mut embeddings = Vec::with_capacity(frames.len());
-
-        for (i, frame) in frames.iter().enumerate() {
-            if let Some(e) = self.try_embed_from_frame(frame)? {
-                tracing::debug!(
-                    frame_index = i,
-                    dim = e.0.len(),
-                    ctx = log_ctx,
-                    "capture: frame contributed embedding"
-                );
-                embeddings.push(e);
-            } else {
-                tracing::debug!(frame_index = i, ctx = log_ctx, "capture: frame skipped");
-            }
-        }
-
-        Ok(embeddings)
     }
 
     pub fn enroll(&self, user: &UserId) -> Result<(), AppError> {
@@ -437,6 +308,15 @@ impl TrueIdApp {
             return Err(crate::domain::error::DomainError::AlreadyEnrolled.into());
         }
 
+        match self.enroll_pipeline {
+            EnrollPipelineMode::Batch => self.enroll_batch(user),
+            EnrollPipelineMode::Streaming => Err(AppError::PipelineNotImplemented(
+                "enroll: streaming pipeline not implemented yet",
+            )),
+        }
+    }
+
+    fn enroll_batch(&self, user: &UserId) -> Result<(), AppError> {
         let spec = self.capture.enroll.validate()?;
         tracing::info!(
             warmup_discard = spec.warmup_discard,
@@ -508,6 +388,30 @@ impl TrueIdApp {
         Ok(())
     }
 
+    fn collect_embeddings(
+        &self,
+        frames: &[Frame],
+        log_ctx: &'static str,
+    ) -> Result<Vec<Embedding>, AppError> {
+        let mut embeddings = Vec::with_capacity(frames.len());
+
+        for (i, frame) in frames.iter().enumerate() {
+            if let Some(e) = self.try_embed_from_frame(frame)? {
+                tracing::debug!(
+                    frame_index = i,
+                    dim = e.0.len(),
+                    ctx = log_ctx,
+                    "capture: frame contributed embedding"
+                );
+                embeddings.push(e);
+            } else {
+                tracing::debug!(frame_index = i, ctx = log_ctx, "capture: frame skipped");
+            }
+        }
+
+        Ok(embeddings)
+    }
+
     /// Add templates from a new capture; user must already be enrolled.
     pub fn add_template(&self, user: &UserId) -> Result<(), AppError> {
         let span = tracing::info_span!("add_template", uid = user.0);
@@ -518,7 +422,7 @@ impl TrueIdApp {
             HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
         }
 
-        let mut bundle = self
+        let bundle = self
             .template_store
             .load_all(user)?
             .filter(|b| b.has_any_enrollment())
@@ -529,6 +433,15 @@ impl TrueIdApp {
             "add_template: loaded existing"
         );
 
+        match self.enroll_pipeline {
+            EnrollPipelineMode::Batch => self.add_template_batch(user, bundle),
+            EnrollPipelineMode::Streaming => Err(AppError::PipelineNotImplemented(
+                "add_template: streaming pipeline not implemented yet",
+            )),
+        }
+    }
+
+    fn add_template_batch(&self, user: &UserId, mut bundle: TemplateBundle) -> Result<(), AppError> {
         let spec = self.capture.enroll.validate()?;
         tracing::info!(
             warmup_discard = spec.warmup_discard,
@@ -591,6 +504,7 @@ impl TrueIdApp {
 mod tests {
     use super::*;
     use crate::application::error::AppError;
+    use crate::application::pipeline::{EnrollPipelineMode, VerifyPipelineMode};
     use crate::domain::error::DomainError;
     use crate::domain::{
         BoundingBox, Embedding, FaceDetection, Frame, PixelFormat, StreamModality, TemplateBundle,
@@ -785,16 +699,9 @@ mod tests {
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
             modality_fusion: ModalityFusionConfig::default(),
+            enroll_pipeline: EnrollPipelineMode::Batch,
+            verify_pipeline: VerifyPipelineMode::Batch,
         })
-    }
-
-    #[test]
-    fn template_quorum_required_is_ceil_half() {
-        assert_eq!(super::template_quorum_required(1), 1);
-        assert_eq!(super::template_quorum_required(2), 1);
-        assert_eq!(super::template_quorum_required(3), 2);
-        assert_eq!(super::template_quorum_required(4), 2);
-        assert_eq!(super::template_quorum_required(5), 3);
     }
 
     #[test]
@@ -820,6 +727,8 @@ mod tests {
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
             modality_fusion: ModalityFusionConfig::default(),
+            enroll_pipeline: EnrollPipelineMode::Batch,
+            verify_pipeline: VerifyPipelineMode::Batch,
         });
         let err = app.ping().unwrap_err();
         assert!(err.to_string().contains("camera offline"));
@@ -933,6 +842,8 @@ mod tests {
             matcher: Arc::new(AsymmetricWeakRgbMatcher),
             capture: MultiFramePolicy::default(),
             modality_fusion: ModalityFusionConfig::default(),
+            enroll_pipeline: EnrollPipelineMode::Batch,
+            verify_pipeline: VerifyPipelineMode::Batch,
         });
         assert!(!app.verify(&UserId(7100)).unwrap());
     }
@@ -985,6 +896,8 @@ mod tests {
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
             modality_fusion: ModalityFusionConfig::default(),
+            enroll_pipeline: EnrollPipelineMode::Batch,
+            verify_pipeline: VerifyPipelineMode::Batch,
         });
         let err = app.enroll(&UserId(6000)).unwrap_err();
         assert!(matches!(
@@ -1009,8 +922,34 @@ mod tests {
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
             modality_fusion: ModalityFusionConfig::default(),
+            enroll_pipeline: EnrollPipelineMode::Batch,
+            verify_pipeline: VerifyPipelineMode::Batch,
         });
         let err = app.enroll(&UserId(5000)).unwrap_err();
         assert!(err.to_string().contains("camera offline"));
+    }
+
+    #[test]
+    fn enroll_streaming_returns_not_implemented() {
+        let store = Arc::new(MemoryStore::empty());
+        let template_store: Arc<dyn TemplateStore> = store;
+        let app = TrueIdApp::new(super::TrueIdAppDeps {
+            health: Arc::new(OkHealth),
+            camera: Arc::new(TestCamera),
+            detector: Arc::new(FullFrameDetector),
+            aligner: Arc::new(CloneAligner),
+            liveness: Arc::new(AlwaysLive),
+            face_embedder: Arc::new(ConstFaceEmbedder {
+                out: Embedding(vec![1.0, 0.0]),
+            }),
+            template_store,
+            matcher: Arc::new(ExactMatcher),
+            capture: MultiFramePolicy::default(),
+            modality_fusion: ModalityFusionConfig::default(),
+            enroll_pipeline: EnrollPipelineMode::Streaming,
+            verify_pipeline: VerifyPipelineMode::Batch,
+        });
+        let err = app.enroll(&UserId(42)).unwrap_err();
+        assert!(matches!(err, AppError::PipelineNotImplemented(_)));
     }
 }

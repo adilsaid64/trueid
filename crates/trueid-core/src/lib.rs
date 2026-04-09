@@ -2,8 +2,12 @@ pub mod application;
 pub mod domain;
 pub mod ports;
 
-pub use application::app::{ModalityFusionConfig, MultiFramePolicy, TrueIdApp, TrueIdAppDeps};
+pub use application::app::{MultiFramePolicy, TrueIdApp, TrueIdAppDeps};
+pub use application::pipeline::{EnrollPipelineMode, VerifyPipelineMode};
 pub use application::error::AppError;
+pub use application::verification_decision::{
+    BurstVerificationOutcome, ModalityFusionConfig, VerificationDecider,
+};
 pub use domain::error::DomainError;
 pub use domain::{
     BoundingBox, Embedding, EmbeddingSummary, FaceDetection, FaceLandmarks, Frame, PixelFormat,

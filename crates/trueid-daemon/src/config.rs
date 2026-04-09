@@ -12,8 +12,34 @@ pub struct Config {
     pub camera: CameraConfig,
     pub models: ModelsConfig,
     pub paths: PathsConfig,
+    pub pipeline: PipelineConfig,
     pub verification: VerificationConfig,
     pub development: DevelopmentConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct PipelineConfig {
+    /// `batch` — burst capture; `streaming` — reserved (returns not implemented until built).
+    pub enroll: PipelineModeYaml,
+    pub verify: PipelineModeYaml,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PipelineModeYaml {
+    #[default]
+    Batch,
+    Streaming,
+}
+
+impl Default for PipelineConfig {
+    fn default() -> Self {
+        Self {
+            enroll: PipelineModeYaml::Batch,
+            verify: PipelineModeYaml::Batch,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -65,6 +91,43 @@ pub struct PathsConfig {
 pub struct VerificationConfig {
     pub match_threshold: f32,
     pub fusion: ModalityFusionYaml,
+    /// Enroll vs verify burst lengths (warmup discard + frame count). Matches [`trueid_core::MultiFramePolicy`] defaults when omitted.
+    pub capture: CapturePolicyYaml,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CapturePolicyYaml {
+    pub enroll: CaptureSpecYaml,
+    pub verify: CaptureSpecYaml,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CaptureSpecYaml {
+    pub warmup_discard: u32,
+    pub frame_count: u32,
+}
+
+impl Default for CaptureSpecYaml {
+    fn default() -> Self {
+        Self {
+            warmup_discard: 2,
+            frame_count: 3,
+        }
+    }
+}
+
+impl Default for CapturePolicyYaml {
+    fn default() -> Self {
+        Self {
+            enroll: CaptureSpecYaml {
+                warmup_discard: 2,
+                frame_count: 5,
+            },
+            verify: CaptureSpecYaml::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -140,6 +203,7 @@ impl Default for VerificationConfig {
         Self {
             match_threshold: 0.70,
             fusion: ModalityFusionYaml::default(),
+            capture: CapturePolicyYaml::default(),
         }
     }
 }
