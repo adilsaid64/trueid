@@ -6,6 +6,16 @@ A Windows Hello–like experience for Linux, with support for RGB and optional I
 
 Project is still a work in progress and open to contributions :)
 
+## Features I want to add next
+- Streaming: Current pipeline captures `x` frames, and does inference, then decision. I would like to add the ability for streaming, so we 
+    - `capture -> frame -> inference -> repeat x times -> decision` 
+    - rather than `capture x frames -> inference -> decision`
+
+- Better liveliness detector: Currently anything passes liveliness, but I think the streaming inference mode will help improve that
+
+- Extend the CLI tool to make it easier for people to delete templates, and change config etc
+
+- Storing embeddings as encrypted rather than raw jsons
 
 ## Components
 
