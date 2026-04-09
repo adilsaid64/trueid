@@ -19,16 +19,19 @@ clean:
 deb: build
 	$(CARGO) install cargo-deb --locked
 	cd $(DAEMON_CRATE) && cargo deb
+	VERSION=$(VERSION); \
 	FILE=$$(ls $(TARGET_DIR)/debian/*.deb | head -n 1); \
-	mv $$FILE $(TARGET_DIR)/debian/trueid-$(VERSION)-ubuntu.deb
+	mv $$FILE $(TARGET_DIR)/debian/trueid-$$VERSION-ubuntu.deb
 
 rpm: build
 	$(CARGO) install cargo-generate-rpm --locked
 	$(CARGO) generate-rpm -p $(DAEMON_CRATE)
+	VERSION=$(VERSION); \
 	FILE=$$(ls $(TARGET_DIR)/generate-rpm/*.rpm | head -n 1); \
-	mv $$FILE $(TARGET_DIR)/generate-rpm/trueid-$(VERSION)-fedora.rpm
+	mv $$FILE $(TARGET_DIR)/generate-rpm/trueid-$$VERSION-fedora.rpm
 
 install: build
 	sudo cp target/release/trueid-daemon /usr/bin/
+	sudo cp target/release/trueid-ctl /usr/bin/
 
 ci: test lint
