@@ -1,36 +1,38 @@
 # trueid
 
-Linux facial authentication system written in Rust.  
+Linux facial authentication system written in Rust.
 
-A Windows Hello–like experience for Linux, with support for RGB and optional IR cameras.
+A Windows Hello–like experience for Linux. You run **either** an RGB **or** an IR camera. enrollment and verification use the same modality.
 
 Project is still a work in progress and open to contributions :)
 
+## How it works (current behavior)
+
+- **trueid-daemon** opens a **streaming session** on the configured camera (`VideoSource::open_session`), pulls frames with `next_frame`, and runs detect → align → liveness → embed per frame until limits in config are reached.
+- **Templates** are stored as a single list of embeddings per user (JSON on disk under `paths.templates`).
+- **Verify** compares probe embeddings against enrolled templates (quorum-style matching over the stream). There is **no** separate RGB/IR fusion; use one stream type per deployment.
+
 ## Features I want to add next
-- Streaming inference. Current pipeline captures `x` frames, and does inference, then decision. I would like to add the ability for streaming, so we 
-    - `capture -> frame -> inference -> repeat x times -> decision` 
-    - rather than `capture x frames -> inference -> decision`
 
-- Better liveliness detector. Currently anything passes liveliness, but I think the streaming inference mode will help improve that
+- Better liveness detector. Currently anything passes liveness; streaming gives more room to improve this later.
 
-- Extend the CLI tool to make it easier for people to delete templates, and change config etc
+- Extend the CLI tool: delete templates, edit config, etc.
 
-- Storing embeddings as encrypted files rather than raw jsons
+- Storing embeddings as encrypted files rather than raw JSON.
 
-- Maybe some UX, look notifications, or UI, maybe...still undecided
+- Maybe notifications, a small UI—still undecided.
 
 ## Components
 
 `trueid` is composed of three core components:
 
-| Component            | Description                          | Responsibilities                                                                                               |
-| -------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| **trueid-ctl**    | CLI tool for interacting with trueid | Enroll users, verify authentication, manage templates, download models                                         |
-| **trueid-pam** | PAM module for system integration    | Hooks into login, `sudo`, and other PAM services                                                               |
-| **trueid-daemon**        | Background daemon                    | Camera capture (RGB/IR), face detection, alignment, liveness checks, embedding + matching, template management |
+| Component | Description | Responsibilities |
+| --------- | ----------- | ---------------- |
+| **trueid-ctl** | CLI for talking to the daemon | Enroll, verify, add-template, `get-models`, ping |
+| **trueid-pam** | PAM module | Hooks into login, `sudo`, and other PAM services |
+| **trueid-daemon** | Background service | V4L (or mock) video session, ONNX face pipeline, template I/O, Unix socket IPC |
 
-
-* [Architecture](docs/architecture.md)
+* [Architecture](docs/architecture.md) (may lag the code slightly—prefer this README + `docs/developing.md` for current behavior)
 * [Run / config](docs/developing.md)
 * [Models](docs/models.md)
 
@@ -53,61 +55,53 @@ sudo dnf install ./trueid-*-fedora.rpm
 ### Build from source
 
 ```bash
-git clone https://github.com/adilsaid64/trueid 
-cd trueid 
+git clone https://github.com/adilsaid64/trueid
+cd trueid
 cargo build --release
 ```
 
-## IR camera
+## Camera: RGB or IR
 
-If you're using a Windows Hello–compatible device or any camera with IR support, you may need to enable the IR emitter with [linux-enable-ir-emitter](https://github.com/EmixamPP/linux-enable-ir-emitter)
+Configure **exactly one** of `camera.enable_rgb` or `camera.enable_ir`. Set `rgb_index` or `ir_index` to match `/dev/video*`.
 
-You can test if your IR emitter works like this:
+If you use a Windows Hello–style device, you may need the IR emitter enabled with [linux-enable-ir-emitter](https://github.com/EmixamPP/linux-enable-ir-emitter).
 
-1. List your current connected devices
+Quick checks:
 
-```
+```bash
 ls /dev/video*
+ffplay /dev/video2   # example: inspect a given index
 ```
-
-You should see something like this `/dev/video0  /dev/video1  /dev/video2  /dev/video3`
-
-Typically dev0 is your RGB index, and dev2 is the IR one. But you can double check by playing each one.
-
-```
-ffplay /dev/video2
-```
-
-If your IR emitter is working correctly, it should be flashing red continuously.
 
 ## Usage
 
-After installaion
+After installation:
 
 ### 1. Download ML models
-Download embedding and face detection models first.
 
 ```bash
 sudo trueid-ctl get-models
 ```
 
 ### 2. Edit config
-By default, IR is disabled. You may also need to adjust the video device indices for your RGB and IR cameras.
-
-Typical defaults:
-
-- RGB: /dev/video0
-- IR: /dev/video2
 
 ```bash
 sudo vim /etc/trueid/config.yaml
 ```
 
-Then restart the processes by `sudo systemctl restart trueid`
+Important keys:
+
+- **Camera:** `enable_rgb` / `enable_ir` (one true), `rgb_index` / `ir_index`, resolution, `mock` for dev without hardware.
+- **Paths:** `paths.templates` must be writable by the daemon user (often `/var/lib/trueid/templates`).
+- **Verification:** `verification.match_threshold`, and `verification.capture` with `warmup_discard` plus **`max_frames`** per operation (enroll vs verify). Legacy YAML may still use `frame_count`; it is accepted as an alias for `max_frames`.
+
+Enroll/verify can take **tens of seconds** (camera + models). The CLI waits up to the IPC read timeout (see `trueid_ipc::IPC_READ_TIMEOUT`).
+
+Then restart the service, e.g. `sudo systemctl restart trueid`.
 
 ### 3. Enroll
 
-You can find the `uid` you should use by running  `id -u`
+Use your Linux uid (`id -u`):
 
 ```bash
 sudo trueid-ctl enroll --uid 1000
@@ -120,14 +114,12 @@ sudo trueid-ctl verify --uid 1000
 ```
 
 ### 5. Add more templates
-Capture more samples to improve accuracy under different conditions
 
 ```bash
 sudo trueid-ctl add-template --uid 1000
 ```
 
-
-## PAM integreation
+## PAM integration
 
 Add this line to the PAM service you want to enable trueid for:
 
