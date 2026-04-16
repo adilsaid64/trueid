@@ -24,7 +24,9 @@ cargo run -p trueid-daemon
 
 Real camera: set `models.face_embedding` and `models.face_detector` to your ONNX paths (defaults under `/var/lib/trueid/models/`).
 
-`paths.debug_v4l_frames`: decoded frames as PNGs under `rgb/…` and `ir/…` per burst.
+`paths.debug_v4l_frames`: decoded frames as PNGs under `rgb/…` or `ir/…` per streaming session.
+
+`verification.capture`: `warmup_discard` frames are discarded, then at most `max_frames` frames are pulled per enroll/verify/add-template (YAML may use legacy key `frame_count`).
 
 ## CLI
 

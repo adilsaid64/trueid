@@ -3,25 +3,50 @@ use std::time::Instant;
 
 use crate::domain::{Embedding, Frame, TemplateBundle, UserId};
 use crate::ports::{
-    CaptureSpec, EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedder, Health, HealthStatus,
+    CaptureError, EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedder, Health, HealthStatus,
     LivenessChecker, LivenessError, TemplateStore, VideoSource,
 };
 
 use super::error::AppError;
 use super::verification_decision::{VerificationDecider, template_quorum_required};
 
-/// Enroll vs verify capture lengths.
+/// Warmup discard + max frames to pull from an open [`VideoSession`](crate::ports::VideoSession).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MultiFramePolicy {
-    pub enroll: CaptureSpec,
-    pub verify: CaptureSpec,
+pub struct StreamLimits {
+    pub warmup_discard: u32,
+    pub max_frames: u32,
 }
 
-impl Default for MultiFramePolicy {
+impl StreamLimits {
+    pub const fn new(warmup_discard: u32, max_frames: u32) -> Self {
+        Self {
+            warmup_discard,
+            max_frames,
+        }
+    }
+
+    pub fn validate(self) -> Result<Self, CaptureError> {
+        if self.max_frames == 0 {
+            return Err(CaptureError::Failed(
+                "StreamLimits.max_frames must be >= 1".into(),
+            ));
+        }
+        Ok(self)
+    }
+}
+
+/// Enroll vs verify streaming limits (same knobs as the old burst counts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamingPolicy {
+    pub enroll: StreamLimits,
+    pub verify: StreamLimits,
+}
+
+impl Default for StreamingPolicy {
     fn default() -> Self {
         Self {
-            enroll: CaptureSpec::new(2, 5),
-            verify: CaptureSpec::new(2, 3),
+            enroll: StreamLimits::new(2, 5),
+            verify: StreamLimits::new(2, 3),
         }
     }
 }
@@ -36,7 +61,7 @@ pub struct TrueIdAppDeps {
     pub face_embedder: Arc<dyn FaceEmbedder>,
     pub template_store: Arc<dyn TemplateStore>,
     pub matcher: Arc<dyn EmbeddingMatcher>,
-    pub capture: MultiFramePolicy,
+    pub streaming: StreamingPolicy,
 }
 
 pub struct TrueIdApp {
@@ -48,7 +73,7 @@ pub struct TrueIdApp {
     face_embedder: Arc<dyn FaceEmbedder>,
     template_store: Arc<dyn TemplateStore>,
     verification: VerificationDecider,
-    capture: MultiFramePolicy,
+    streaming: StreamingPolicy,
 }
 
 impl TrueIdApp {
@@ -62,7 +87,7 @@ impl TrueIdApp {
             face_embedder: deps.face_embedder,
             template_store: deps.template_store,
             verification: VerificationDecider::new(deps.matcher.clone()),
-            capture: deps.capture,
+            streaming: deps.streaming,
         }
     }
 
@@ -123,27 +148,6 @@ impl TrueIdApp {
         Ok(Some(emb))
     }
 
-    /// Run `try_embed_from_frame` on each frame of one stream (batch path; streaming can reuse the same step per frame).
-    fn modality_probes_from_frames(
-        &self,
-        frames: &[Frame],
-        log_ctx: &'static str,
-    ) -> Result<Vec<Option<Embedding>>, AppError> {
-        let mut out = Vec::with_capacity(frames.len());
-        for (i, frame) in frames.iter().enumerate() {
-            let emb = self.try_embed_from_frame(frame)?;
-            if emb.is_none() {
-                tracing::debug!(
-                    frame_index = i,
-                    ctx = log_ctx,
-                    "verify: modality frame produced no embedding"
-                );
-            }
-            out.push(emb);
-        }
-        Ok(out)
-    }
-
     pub fn ping(&self) -> Result<(), AppError> {
         match self.health.status() {
             HealthStatus::Healthy => Ok(()),
@@ -160,24 +164,15 @@ impl TrueIdApp {
             HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
         }
 
-        self.verify_batch(user)
+        self.verify_stream(user)
     }
 
-    fn verify_batch(&self, user: &UserId) -> Result<bool, AppError> {
-        let spec = self.capture.verify.validate()?;
+    fn verify_stream(&self, user: &UserId) -> Result<bool, AppError> {
+        let limits = self.streaming.verify.validate()?;
         tracing::info!(
-            warmup_discard = spec.warmup_discard,
-            frame_count = spec.frame_count,
-            "verify: capture spec"
-        );
-
-        let t_cap = Instant::now();
-        let frames = self.video.capture(spec)?;
-
-        tracing::info!(
-            frame_count = frames.len(),
-            capture_ms = t_cap.elapsed().as_millis(),
-            "verify: frames from camera"
+            warmup_discard = limits.warmup_discard,
+            max_frames = limits.max_frames,
+            "verify: stream limits"
         );
 
         let Some(bundle) = self.template_store.load_all(user)? else {
@@ -196,16 +191,45 @@ impl TrueIdApp {
             "verify: templates loaded"
         );
 
-        let t_probe = Instant::now();
-        let probes = self.modality_probes_from_frames(&frames, "verify")?;
+        let t_stream = Instant::now();
+        let mut session = self.video.open_session()?;
+
+        for i in 0..limits.warmup_discard {
+            session.next_frame().map_err(AppError::from)?;
+            tracing::trace!(frame = i, "verify: warmup discard");
+        }
+
+        let mut probes: Vec<Option<Embedding>> = Vec::with_capacity(limits.max_frames as usize);
+
+        for _ in 0..limits.max_frames {
+            let frame = session.next_frame()?;
+            let emb = self.try_embed_from_frame(&frame)?;
+            if emb.is_none() {
+                tracing::debug!(
+                    frame_index = probes.len(),
+                    "verify: frame produced no embedding"
+                );
+            }
+            probes.push(emb);
+
+            let outcome = self.verification.verify_burst(&bundle, &probes);
+            if outcome.accepted {
+                tracing::info!(
+                    frames_tried = probes.len(),
+                    elapsed_ms = t_stream.elapsed().as_millis(),
+                    "verify: accept"
+                );
+                return Ok(true);
+            }
+        }
+
         tracing::info!(
             frames = probes.len(),
             with_embedding = probes.iter().filter(|x| x.is_some()).count(),
-            elapsed_ms = t_probe.elapsed().as_millis(),
-            "verify: burst processed"
+            elapsed_ms = t_stream.elapsed().as_millis(),
+            "verify: stream processed"
         );
 
-        let t_match = Instant::now();
         let outcome = self.verification.verify_burst(&bundle, &probes);
 
         tracing::info!(
@@ -213,20 +237,16 @@ impl TrueIdApp {
             quorum = outcome.quorum,
             best_sim = outcome.best_sim,
             has_probe = outcome.has_probe,
-            elapsed_ms = t_match.elapsed().as_millis(),
+            elapsed_ms = t_stream.elapsed().as_millis(),
             "verify: match"
         );
 
         if outcome.accepted {
-            tracing::info!(total_ms = t_match.elapsed().as_millis(), "verify: accept");
-            return Ok(true);
+            tracing::info!(templates = n_templates, "verify: accept");
+        } else {
+            tracing::info!(templates = n_templates, "verify: reject");
         }
-        tracing::info!(
-            total_ms = t_match.elapsed().as_millis(),
-            templates = n_templates,
-            "verify: reject"
-        );
-        Ok(false)
+        Ok(outcome.accepted)
     }
 
     pub fn enroll(&self, user: &UserId) -> Result<(), AppError> {
@@ -246,31 +266,45 @@ impl TrueIdApp {
             return Err(crate::domain::error::DomainError::AlreadyEnrolled.into());
         }
 
-        self.enroll_batch(user)
+        self.enroll_stream(user)
     }
 
-    fn enroll_batch(&self, user: &UserId) -> Result<(), AppError> {
-        let spec = self.capture.enroll.validate()?;
+    fn enroll_stream(&self, user: &UserId) -> Result<(), AppError> {
+        let limits = self.streaming.enroll.validate()?;
         tracing::info!(
-            warmup_discard = spec.warmup_discard,
-            frame_count = spec.frame_count,
-            "enroll: capture spec"
+            warmup_discard = limits.warmup_discard,
+            max_frames = limits.max_frames,
+            "enroll: stream limits"
         );
 
-        let t_cap = Instant::now();
+        let t_stream = Instant::now();
+        let mut session = self.video.open_session()?;
 
-        let frames = self.video.capture(spec)?;
+        for i in 0..limits.warmup_discard {
+            session.next_frame().map_err(AppError::from)?;
+            tracing::trace!(frame = i, "enroll: warmup discard");
+        }
+
+        let mut embeddings = Vec::new();
+        for i in 0..limits.max_frames {
+            let frame = session.next_frame()?;
+            if let Some(e) = self.try_embed_from_frame(&frame)? {
+                tracing::debug!(
+                    frame_index = i,
+                    dim = e.0.len(),
+                    "enroll: frame contributed embedding"
+                );
+                embeddings.push(e);
+            } else {
+                tracing::debug!(frame_index = i, "enroll: frame skipped");
+            }
+        }
+
         tracing::info!(
-            frame_count = frames.len(),
-            capture_ms = t_cap.elapsed().as_millis(),
-            "enroll: frames from camera"
+            collected = embeddings.len(),
+            elapsed_ms = t_stream.elapsed().as_millis(),
+            "enroll: stream processed"
         );
-
-        let embeddings = if frames.is_empty() {
-            Vec::new()
-        } else {
-            self.collect_embeddings(&frames, "enroll")?
-        };
 
         if embeddings.is_empty() {
             tracing::warn!("enroll: no usable embeddings from any frame");
@@ -293,30 +327,6 @@ impl TrueIdApp {
         Ok(())
     }
 
-    fn collect_embeddings(
-        &self,
-        frames: &[Frame],
-        log_ctx: &'static str,
-    ) -> Result<Vec<Embedding>, AppError> {
-        let mut embeddings = Vec::with_capacity(frames.len());
-
-        for (i, frame) in frames.iter().enumerate() {
-            if let Some(e) = self.try_embed_from_frame(frame)? {
-                tracing::debug!(
-                    frame_index = i,
-                    dim = e.0.len(),
-                    ctx = log_ctx,
-                    "capture: frame contributed embedding"
-                );
-                embeddings.push(e);
-            } else {
-                tracing::debug!(frame_index = i, ctx = log_ctx, "capture: frame skipped");
-            }
-        }
-
-        Ok(embeddings)
-    }
-
     /// Add templates from a new capture; user must already be enrolled.
     pub fn add_template(&self, user: &UserId) -> Result<(), AppError> {
         let span = tracing::info_span!("add_template", uid = user.0);
@@ -337,34 +347,49 @@ impl TrueIdApp {
             "add_template: loaded existing"
         );
 
-        self.add_template_batch(user, bundle)
+        self.add_template_stream(user, bundle)
     }
 
-    fn add_template_batch(
+    fn add_template_stream(
         &self,
         user: &UserId,
         mut bundle: TemplateBundle,
     ) -> Result<(), AppError> {
-        let spec = self.capture.enroll.validate()?;
+        let limits = self.streaming.enroll.validate()?;
         tracing::info!(
-            warmup_discard = spec.warmup_discard,
-            frame_count = spec.frame_count,
-            "add_template: capture spec"
+            warmup_discard = limits.warmup_discard,
+            max_frames = limits.max_frames,
+            "add_template: stream limits"
         );
 
-        let t_cap = Instant::now();
-        let frames = self.video.capture(spec)?;
-        tracing::info!(
-            frame_count = frames.len(),
-            capture_ms = t_cap.elapsed().as_millis(),
-            "add_template: frames from camera"
-        );
+        let t_stream = Instant::now();
+        let mut session = self.video.open_session()?;
 
-        let embeddings = if frames.is_empty() {
-            Vec::new()
-        } else {
-            self.collect_embeddings(&frames, "add_template")?
-        };
+        for i in 0..limits.warmup_discard {
+            session.next_frame().map_err(AppError::from)?;
+            tracing::trace!(frame = i, "add_template: warmup discard");
+        }
+
+        let mut embeddings = Vec::new();
+        for i in 0..limits.max_frames {
+            let frame = session.next_frame()?;
+            if let Some(e) = self.try_embed_from_frame(&frame)? {
+                tracing::debug!(
+                    frame_index = i,
+                    dim = e.0.len(),
+                    "add_template: frame contributed embedding"
+                );
+                embeddings.push(e);
+            } else {
+                tracing::debug!(frame_index = i, "add_template: frame skipped");
+            }
+        }
+
+        tracing::info!(
+            collected = embeddings.len(),
+            elapsed_ms = t_stream.elapsed().as_millis(),
+            "add_template: stream processed"
+        );
 
         if embeddings.is_empty() {
             tracing::warn!("add_template: no usable embeddings from any frame");
@@ -395,9 +420,9 @@ mod tests {
         BoundingBox, Embedding, FaceDetection, Frame, PixelFormat, StreamModality, TemplateBundle,
     };
     use crate::ports::{
-        AlignError, CaptureError, CaptureSpec, DetectError, EmbeddingMatcher, FaceAligner,
-        FaceDetector, FaceEmbedError, FaceEmbedder, Health, HealthStatus, LivenessChecker,
-        LivenessError, StoreError, TemplateStore, VideoSource,
+        AlignError, CaptureError, DetectError, EmbeddingMatcher, FaceAligner, FaceDetector,
+        FaceEmbedError, FaceEmbedder, Health, HealthStatus, LivenessChecker, LivenessError,
+        StoreError, TemplateStore, VideoSession, VideoSource,
     };
 
     struct OkHealth;
@@ -416,6 +441,16 @@ mod tests {
         }
     }
 
+    struct TestVideoSession {
+        frame: Frame,
+    }
+
+    impl VideoSession for TestVideoSession {
+        fn next_frame(&mut self) -> Result<Frame, CaptureError> {
+            Ok(self.frame.clone())
+        }
+    }
+
     struct TestVideo;
 
     impl VideoSource for TestVideo {
@@ -423,16 +458,16 @@ mod tests {
             StreamModality::Rgb
         }
 
-        fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError> {
-            let spec = spec.validate()?;
-            let f = Frame {
-                modality: StreamModality::Rgb,
-                width: 1,
-                height: 1,
-                format: PixelFormat::Gray8,
-                bytes: vec![0],
-            };
-            Ok(vec![f; spec.frame_count as usize])
+        fn open_session(&self) -> Result<Box<dyn VideoSession>, CaptureError> {
+            Ok(Box::new(TestVideoSession {
+                frame: Frame {
+                    modality: StreamModality::Rgb,
+                    width: 1,
+                    height: 1,
+                    format: PixelFormat::Gray8,
+                    bytes: vec![0],
+                },
+            }))
         }
     }
 
@@ -530,7 +565,7 @@ mod tests {
             face_embedder: Arc::new(ConstFaceEmbedder { out: embed_out }),
             template_store,
             matcher: Arc::new(ExactMatcher),
-            capture: MultiFramePolicy::default(),
+            streaming: StreamingPolicy::default(),
         })
     }
 
@@ -555,7 +590,7 @@ mod tests {
             }),
             template_store: store,
             matcher: Arc::new(ExactMatcher),
-            capture: MultiFramePolicy::default(),
+            streaming: StreamingPolicy::default(),
         });
         let err = app.ping().unwrap_err();
         assert!(err.to_string().contains("camera offline"));
@@ -691,7 +726,7 @@ mod tests {
             }),
             template_store: store,
             matcher: Arc::new(ExactMatcher),
-            capture: MultiFramePolicy::default(),
+            streaming: StreamingPolicy::default(),
         });
         let err = app.enroll(&UserId(6000)).unwrap_err();
         assert!(matches!(
@@ -714,7 +749,7 @@ mod tests {
             }),
             template_store: store,
             matcher: Arc::new(ExactMatcher),
-            capture: MultiFramePolicy::default(),
+            streaming: StreamingPolicy::default(),
         });
         let err = app.enroll(&UserId(5000)).unwrap_err();
         assert!(err.to_string().contains("camera offline"));

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use trueid_core::ports::{FaceAligner, FaceDetector, FaceEmbedder};
 use trueid_core::{
-    CaptureSpec, Embedding, MultiFramePolicy, StreamModality, TrueIdApp, TrueIdAppDeps, VideoSource,
+    Embedding, StreamLimits, StreamModality, StreamingPolicy, TrueIdApp, TrueIdAppDeps, VideoSource,
 };
 use trueid_ipc::SOCKET_PATH;
 
@@ -123,14 +123,14 @@ fn main() -> std::io::Result<()> {
     };
     let liveness = Arc::new(adapters::AlwaysLiveLiveness);
 
-    let capture = MultiFramePolicy {
-        enroll: CaptureSpec::new(
+    let streaming = StreamingPolicy {
+        enroll: StreamLimits::new(
             cfg.verification.capture.enroll.warmup_discard,
-            cfg.verification.capture.enroll.frame_count,
+            cfg.verification.capture.enroll.max_frames,
         ),
-        verify: CaptureSpec::new(
+        verify: StreamLimits::new(
             cfg.verification.capture.verify.warmup_discard,
-            cfg.verification.capture.verify.frame_count,
+            cfg.verification.capture.verify.max_frames,
         ),
     };
 
@@ -143,7 +143,7 @@ fn main() -> std::io::Result<()> {
         face_embedder,
         template_store,
         matcher,
-        capture,
+        streaming,
     }));
 
     ipc::run_unix_socket(SOCKET_PATH, app)

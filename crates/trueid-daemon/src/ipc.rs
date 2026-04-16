@@ -78,21 +78,30 @@ fn dispatch(app: &TrueIdApp, request: Request) -> Response {
         },
         Request::Verify { uid } => match app.verify(&UserId(uid)) {
             Ok(accepted) => Response::VerifyResult { accepted },
-            Err(e) => Response::Error {
-                message: e.to_string(),
-            },
+            Err(e) => {
+                tracing::warn!(error = %e, uid, "ipc: verify failed");
+                Response::Error {
+                    message: e.to_string(),
+                }
+            }
         },
         Request::Enroll { uid } => match app.enroll(&UserId(uid)) {
             Ok(()) => Response::EnrollOk,
-            Err(e) => Response::Error {
-                message: e.to_string(),
-            },
+            Err(e) => {
+                tracing::warn!(error = %e, uid, "ipc: enroll failed");
+                Response::Error {
+                    message: e.to_string(),
+                }
+            }
         },
         Request::AddTemplate { uid } => match app.add_template(&UserId(uid)) {
             Ok(()) => Response::AddTemplateOk,
-            Err(e) => Response::Error {
-                message: e.to_string(),
-            },
+            Err(e) => {
+                tracing::warn!(error = %e, uid, "ipc: add_template failed");
+                Response::Error {
+                    message: e.to_string(),
+                }
+            }
         },
     };
 

@@ -14,4 +14,4 @@ pub use health::{Health, HealthStatus};
 pub use liveness::{LivenessChecker, LivenessError};
 pub use matcher::EmbeddingMatcher;
 pub use template_store::{StoreError, TemplateStore};
-pub use video::{CaptureError, CaptureSpec, VideoSource};
+pub use video::{CaptureError, VideoSession, VideoSource};

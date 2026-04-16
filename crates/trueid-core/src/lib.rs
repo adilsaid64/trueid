@@ -2,7 +2,7 @@ pub mod application;
 pub mod domain;
 pub mod ports;
 
-pub use application::app::{MultiFramePolicy, TrueIdApp, TrueIdAppDeps};
+pub use application::app::{StreamLimits, StreamingPolicy, TrueIdApp, TrueIdAppDeps};
 pub use application::error::AppError;
 pub use application::verification_decision::{BurstVerificationOutcome, VerificationDecider};
 pub use domain::error::DomainError;
@@ -11,6 +11,6 @@ pub use domain::{
     StreamModality, TemplateBundle, UserId,
 };
 pub use ports::{
-    AlignError, CaptureError, CaptureSpec, DetectError, FaceAligner, FaceDetector, FaceEmbedError,
-    FaceEmbedder, LivenessChecker, LivenessError, VideoSource,
+    AlignError, CaptureError, DetectError, FaceAligner, FaceDetector, FaceEmbedError, FaceEmbedder,
+    LivenessChecker, LivenessError, VideoSession, VideoSource,
 };

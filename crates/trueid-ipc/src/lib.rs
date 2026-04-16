@@ -1,9 +1,15 @@
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 pub const IPC_PROTOCOL_VERSION: u32 = 2;
 
-// pub const SOCKET_PATH: &str = "/tmp/trueid.sock";
-pub const SOCKET_PATH: &str = "/run/trueid/trueid.sock";
+/// Client read timeout waiting for the daemon reply. Enroll/verify/add-template can take tens
+/// of seconds (camera + ML); a short timeout surfaces as `Resource temporarily unavailable` (EAGAIN)
+/// on Linux when [`UnixStream::read_line`] times out.
+pub const IPC_READ_TIMEOUT: Duration = Duration::from_secs(120);
+
+pub const SOCKET_PATH: &str = "/tmp/trueid.sock";
+// pub const SOCKET_PATH: &str = "/run/trueid/trueid.sock";
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -34,13 +40,11 @@ pub enum Response {
 pub fn send_request(request: Request) -> std::io::Result<Response> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
-    use std::time::Duration;
 
     let mut stream = UnixStream::connect(SOCKET_PATH)?;
 
-    let timeout = Duration::from_secs(5);
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
+    stream.set_read_timeout(Some(IPC_READ_TIMEOUT))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
 
     let request_json = serde_json::to_string(&request)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;

@@ -27,14 +27,14 @@ paths:
 
 verification:
   match_threshold: 0.70
-  # Burst capture: discard N warmup frames, then keep M frames (enroll vs verify).
+  # Streaming: discard N warmup frames, then pull at most M frames per operation (enroll vs verify).
   capture:
     enroll:
       warmup_discard: 2
-      frame_count: 5
+      max_frames: 5
     verify:
       warmup_discard: 2
-      frame_count: 3
+      max_frames: 3
 
 development:
   mock_embedder: false

@@ -1,5 +1,15 @@
-use trueid_core::ports::{CaptureError, CaptureSpec, VideoSource};
+use trueid_core::ports::{CaptureError, VideoSession, VideoSource};
 use trueid_core::{Frame, PixelFormat, StreamModality};
+
+pub struct MockVideoSession {
+    frame: Frame,
+}
+
+impl VideoSession for MockVideoSession {
+    fn next_frame(&mut self) -> Result<Frame, CaptureError> {
+        Ok(self.frame.clone())
+    }
+}
 
 pub struct MockVideoSource {
     frame: Frame,
@@ -24,14 +34,9 @@ impl VideoSource for MockVideoSource {
         self.frame.modality
     }
 
-    fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError> {
-        let spec = spec.validate()?;
-        tracing::debug!(
-            frame_count = spec.frame_count,
-            w = self.frame.width,
-            h = self.frame.height,
-            "mock video: capture"
-        );
-        Ok((0..spec.frame_count).map(|_| self.frame.clone()).collect())
+    fn open_session(&self) -> Result<Box<dyn VideoSession>, CaptureError> {
+        Ok(Box::new(MockVideoSession {
+            frame: self.frame.clone(),
+        }))
     }
 }

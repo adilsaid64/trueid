@@ -64,29 +64,31 @@ pub struct PathsConfig {
 #[serde(default)]
 pub struct VerificationConfig {
     pub match_threshold: f32,
-    /// Enroll vs verify burst lengths (warmup discard + frame count). Matches [`trueid_core::MultiFramePolicy`] defaults when omitted.
+    /// Enroll vs verify streaming limits (warmup discard + max frames). Matches [`trueid_core::StreamingPolicy`] defaults when omitted.
     pub capture: CapturePolicyYaml,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct CapturePolicyYaml {
-    pub enroll: CaptureSpecYaml,
-    pub verify: CaptureSpecYaml,
+    pub enroll: StreamLimitsYaml,
+    pub verify: StreamLimitsYaml,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct CaptureSpecYaml {
+pub struct StreamLimitsYaml {
     pub warmup_discard: u32,
-    pub frame_count: u32,
+    /// Maximum frames to pull from the camera after warmup (legacy key: `frame_count`).
+    #[serde(alias = "frame_count")]
+    pub max_frames: u32,
 }
 
-impl Default for CaptureSpecYaml {
+impl Default for StreamLimitsYaml {
     fn default() -> Self {
         Self {
             warmup_discard: 2,
-            frame_count: 3,
+            max_frames: 3,
         }
     }
 }
@@ -94,11 +96,11 @@ impl Default for CaptureSpecYaml {
 impl Default for CapturePolicyYaml {
     fn default() -> Self {
         Self {
-            enroll: CaptureSpecYaml {
+            enroll: StreamLimitsYaml {
                 warmup_discard: 2,
-                frame_count: 5,
+                max_frames: 5,
             },
-            verify: CaptureSpecYaml::default(),
+            verify: StreamLimitsYaml::default(),
         }
     }
 }

@@ -3,13 +3,14 @@
 use std::io;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use image::imageops;
 use image::metadata::Orientation;
 use image::{DynamicImage, GrayImage, ImageDecoder, ImageFormat, ImageReader, RgbImage};
-use trueid_core::ports::{CaptureError, CaptureSpec, VideoSource};
+use std::sync::{Arc, Mutex};
+
+use trueid_core::ports::{CaptureError, VideoSession, VideoSource};
 use trueid_core::{Frame, PixelFormat, StreamModality};
 use v4l::buffer::Type;
 use v4l::io::traits::{CaptureStream, Stream as V4lStream};
@@ -24,7 +25,8 @@ pub struct V4lVideoSource {
     modality: StreamModality,
     pixel_fix: V4lPixelFix,
     debug_frames_root: Option<PathBuf>,
-    capture_lock: Mutex<()>,
+    /// Only one [`VideoSession`] may be active per source (exclusive device use).
+    busy: Arc<Mutex<bool>>,
 }
 
 impl V4lVideoSource {
@@ -64,8 +66,61 @@ impl V4lVideoSource {
             modality,
             pixel_fix,
             debug_frames_root,
-            capture_lock: Mutex::new(()),
+            busy: Arc::new(Mutex::new(false)),
         })
+    }
+}
+
+struct V4lVideoSession {
+    busy: Arc<Mutex<bool>>,
+    /// Kept so the device outlives the stream.
+    _dev: Device,
+    stream: UserptrStream,
+    fourcc: FourCC,
+    width: u32,
+    height: u32,
+    modality: StreamModality,
+    pixel_fix: V4lPixelFix,
+    debug_frames_root: Option<PathBuf>,
+    debug_accum: Vec<Frame>,
+}
+
+impl VideoSession for V4lVideoSession {
+    fn next_frame(&mut self) -> Result<Frame, CaptureError> {
+        let raw = grab_raw_payload(&mut self.stream)?;
+        let (bytes, fw, fh, format) = decode_payload(
+            &self.fourcc,
+            &raw,
+            self.width,
+            self.height,
+            self.modality,
+            self.pixel_fix,
+        )?;
+        let frame = Frame {
+            modality: self.modality,
+            width: fw,
+            height: fh,
+            format,
+            bytes,
+        };
+        if self.debug_frames_root.is_some() {
+            self.debug_accum.push(frame.clone());
+        }
+        Ok(frame)
+    }
+}
+
+impl Drop for V4lVideoSession {
+    fn drop(&mut self) {
+        let _ = V4lStream::stop(&mut self.stream);
+        if let Ok(mut g) = self.busy.lock() {
+            *g = false;
+        }
+        maybe_dump_v4l_burst(
+            self.debug_frames_root.as_deref(),
+            self.modality,
+            &self.debug_accum,
+        );
     }
 }
 
@@ -349,74 +404,75 @@ impl VideoSource for V4lVideoSource {
         self.modality
     }
 
-    fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError> {
-        let spec = spec.validate()?;
-        let warmup = spec.warmup_discard as usize;
-        let keep = spec.frame_count as usize;
-        let t0 = Instant::now();
-        tracing::debug!(
-            warmup_discard = warmup,
-            frame_count = keep,
-            "v4l: capture burst"
-        );
-
-        let _guard = self
-            .capture_lock
+    fn open_session(&self) -> Result<Box<dyn VideoSession>, CaptureError> {
+        let mut busy = self
+            .busy
             .lock()
-            .map_err(|_| CaptureError::Failed("camera mutex poisoned".to_string()))?;
+            .map_err(|_| CaptureError::Failed("camera busy mutex poisoned".into()))?;
+        if *busy {
+            return Err(CaptureError::Failed(
+                "camera already has an active streaming session".into(),
+            ));
+        }
+        *busy = true;
+        drop(busy);
 
-        let dev = Device::new(self.index as usize).map_err(io_to_capture)?;
-        let active = negotiate_format(&dev, self.width, self.height, self.modality)?;
+        let t0 = Instant::now();
+        tracing::debug!("v4l: open streaming session");
+
+        let dev = match Device::new(self.index as usize) {
+            Ok(d) => d,
+            Err(e) => {
+                self.mark_idle();
+                return Err(io_to_capture(e));
+            }
+        };
+        let active = match negotiate_format(&dev, self.width, self.height, self.modality) {
+            Ok(a) => a,
+            Err(e) => {
+                self.mark_idle();
+                return Err(e);
+            }
+        };
         let fourcc = active.fourcc;
         let width = active.width;
         let height = active.height;
-        let mut stream =
-            UserptrStream::with_buffers(&dev, Type::VideoCapture, 4).map_err(io_to_capture)?;
-
-        let burst_result = (|| -> Result<Vec<Vec<u8>>, CaptureError> {
-            for _ in 0..warmup {
-                grab_raw_payload(&mut stream)?;
+        let stream = match UserptrStream::with_buffers(&dev, Type::VideoCapture, 4) {
+            Ok(s) => s,
+            Err(e) => {
+                self.mark_idle();
+                return Err(io_to_capture(e));
             }
-            let mut raws = Vec::with_capacity(keep);
-            for _ in 0..keep {
-                raws.push(grab_raw_payload(&mut stream)?);
-            }
-            Ok(raws)
-        })();
+        };
 
-        let _ = stream.stop();
-
-        let raws = burst_result?;
-
-        let mut frames = Vec::with_capacity(keep);
-        for raw in raws {
-            let (bytes, fw, fh, format) =
-                decode_payload(&fourcc, &raw, width, height, self.modality, self.pixel_fix)?;
-            frames.push(Frame {
-                modality: self.modality,
-                width: fw,
-                height: fh,
-                format,
-                bytes,
-            });
-        }
-        let (log_w, log_h) = frames
-            .last()
-            .map(|f| (f.width, f.height))
-            .unwrap_or((width, height));
         tracing::info!(
             modality = ?self.modality,
-            warmup_discard = warmup,
-            returned = frames.len(),
             fourcc = ?fourcc.str().unwrap_or("?"),
             negotiated_w = width,
             negotiated_h = height,
-            w = log_w,
-            h = log_h,
             elapsed_ms = t0.elapsed().as_millis(),
-            "v4l: capture done"
+            "v4l: streaming session started"
         );
-        maybe_dump_v4l_burst(self.debug_frames_root.as_deref(), self.modality, &frames);
-        Ok(frames)
+
+        Ok(Box::new(V4lVideoSession {
+            busy: Arc::clone(&self.busy),
+            _dev: dev,
+            stream,
+            fourcc,
+            width,
+            height,
+            modality: self.modality,
+            pixel_fix: self.pixel_fix,
+            debug_frames_root: self.debug_frames_root.clone(),
+            debug_accum: Vec::new(),
+        }))
+    }
+}
+
+impl V4lVideoSource {
+    fn mark_idle(&self) {
+        if let Ok(mut g) = self.busy.lock() {
+            *g = false;
+        }
     }
 }
