@@ -3,14 +3,12 @@ use std::time::Instant;
 
 use crate::domain::{Embedding, Frame, TemplateBundle, UserId};
 use crate::ports::{
-    CameraCapture, CaptureSpec, EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedder, Health,
-    HealthStatus, LivenessChecker, LivenessError, TemplateStore,
+    CaptureSpec, EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedder, Health, HealthStatus,
+    LivenessChecker, LivenessError, TemplateStore, VideoSource,
 };
 
 use super::error::AppError;
 use super::verification_decision::{VerificationDecider, template_quorum_required};
-
-pub use super::verification_decision::ModalityFusionConfig;
 
 /// Enroll vs verify capture lengths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +29,7 @@ impl Default for MultiFramePolicy {
 /// [`TrueIdApp`] dependencies.
 pub struct TrueIdAppDeps {
     pub health: Arc<dyn Health>,
-    pub camera: Arc<dyn CameraCapture>,
+    pub video: Arc<dyn VideoSource>,
     pub detector: Arc<dyn FaceDetector>,
     pub aligner: Arc<dyn FaceAligner>,
     pub liveness: Arc<dyn LivenessChecker>,
@@ -39,12 +37,11 @@ pub struct TrueIdAppDeps {
     pub template_store: Arc<dyn TemplateStore>,
     pub matcher: Arc<dyn EmbeddingMatcher>,
     pub capture: MultiFramePolicy,
-    pub modality_fusion: ModalityFusionConfig,
 }
 
 pub struct TrueIdApp {
     health: Arc<dyn Health>,
-    camera: Arc<dyn CameraCapture>,
+    video: Arc<dyn VideoSource>,
     detector: Arc<dyn FaceDetector>,
     aligner: Arc<dyn FaceAligner>,
     liveness: Arc<dyn LivenessChecker>,
@@ -58,13 +55,13 @@ impl TrueIdApp {
     pub fn new(deps: TrueIdAppDeps) -> Self {
         Self {
             health: deps.health,
-            camera: deps.camera,
+            video: deps.video,
             detector: deps.detector,
             aligner: deps.aligner,
             liveness: deps.liveness,
             face_embedder: deps.face_embedder,
             template_store: deps.template_store,
-            verification: VerificationDecider::new(deps.matcher.clone(), deps.modality_fusion),
+            verification: VerificationDecider::new(deps.matcher.clone()),
             capture: deps.capture,
         }
     }
@@ -163,7 +160,7 @@ impl TrueIdApp {
             HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
         }
 
-        return self.verify_batch(user)
+        return self.verify_batch(user);
     }
 
     fn verify_batch(&self, user: &UserId) -> Result<bool, AppError> {
@@ -175,13 +172,10 @@ impl TrueIdApp {
         );
 
         let t_cap = Instant::now();
-        let burst = self.camera.capture(spec)?;
-        let frames_rgb = burst.rgb;
-        let frames_ir = burst.ir;
+        let frames = self.video.capture(spec)?;
 
         tracing::info!(
-            rgb_frames = frames_rgb.as_ref().map_or(0, |v| v.len()),
-            ir_frames = frames_ir.as_ref().map_or(0, |v| v.len()),
+            frame_count = frames.len(),
             capture_ms = t_cap.elapsed().as_millis(),
             "verify: frames from camera"
         );
@@ -192,88 +186,44 @@ impl TrueIdApp {
         if bundle.is_empty() {
             return Err(crate::domain::error::DomainError::NoEnrolledTemplate.into());
         }
-        let n_rgb = bundle.rgb.len();
-        let n_ir = bundle.ir.len();
-        let req_rgb = if n_rgb > 0 {
-            template_quorum_required(n_rgb)
-        } else {
-            0
-        };
-        let req_ir = if n_ir > 0 {
-            template_quorum_required(n_ir)
-        } else {
-            0
-        };
+        let n_templates = bundle.templates.len();
+        let quorum_need = template_quorum_required(n_templates);
 
         tracing::info!(
-            rgb_templates = n_rgb,
-            ir_templates = n_ir,
-            rgb_quorum = req_rgb,
-            ir_quorum = req_ir,
-            fusion = ?self.verification.modality_fusion(),
-            template_dim = bundle
-                .rgb
-                .first()
-                .or_else(|| bundle.ir.first())
-                .map(|e| e.0.len())
-                .unwrap_or(0),
+            templates = n_templates,
+            quorum_required = quorum_need,
+            template_dim = bundle.templates.first().map(|e| e.0.len()).unwrap_or(0),
             "verify: templates loaded"
         );
 
-        let probes_rgb = if let Some(ref rgb_frames) = frames_rgb {
-            let t_rgb = Instant::now();
-            let p = self.modality_probes_from_frames(rgb_frames, "verify_rgb")?;
-            tracing::info!(
-                frames = p.len(),
-                with_embedding = p.iter().filter(|x| x.is_some()).count(),
-                elapsed_ms = t_rgb.elapsed().as_millis(),
-                "verify: RGB burst processed"
-            );
-            Some(p)
-        } else {
-            None
-        };
+        let t_probe = Instant::now();
+        let probes = self.modality_probes_from_frames(&frames, "verify")?;
+        tracing::info!(
+            frames = probes.len(),
+            with_embedding = probes.iter().filter(|x| x.is_some()).count(),
+            elapsed_ms = t_probe.elapsed().as_millis(),
+            "verify: burst processed"
+        );
 
-        let probes_ir = if let Some(ref ir_frames) = frames_ir {
-            let t_ir = Instant::now();
-            let p = self.modality_probes_from_frames(ir_frames, "verify_ir")?;
-            tracing::info!(
-                frames = p.len(),
-                with_embedding = p.iter().filter(|x| x.is_some()).count(),
-                elapsed_ms = t_ir.elapsed().as_millis(),
-                "verify: IR burst processed"
-            );
-            Some(p)
-        } else {
-            None
-        };
-
-        let t_fuse = Instant::now();
-
-        let outcome =
-            self.verification
-                .verify_burst(&bundle, probes_rgb.as_deref(), probes_ir.as_deref());
+        let t_match = Instant::now();
+        let outcome = self.verification.verify_burst(&bundle, &probes);
 
         tracing::info!(
             accepted = outcome.accepted,
-            rgb_quorum = outcome.rgb_quorum,
-            ir_quorum = outcome.ir_quorum,
-            best_sim_rgb = outcome.best_sim_rgb,
-            best_sim_ir = outcome.best_sim_ir,
-            has_rgb_probe = outcome.has_rgb_probe,
-            has_ir_probe = outcome.has_ir_probe,
-            elapsed_ms = t_fuse.elapsed().as_millis(),
-            "verify: fusion"
+            quorum = outcome.quorum,
+            best_sim = outcome.best_sim,
+            has_probe = outcome.has_probe,
+            elapsed_ms = t_match.elapsed().as_millis(),
+            "verify: match"
         );
 
         if outcome.accepted {
-            tracing::info!(total_ms = t_fuse.elapsed().as_millis(), "verify: accept");
+            tracing::info!(total_ms = t_match.elapsed().as_millis(), "verify: accept");
             return Ok(true);
         }
         tracing::info!(
-            total_ms = t_fuse.elapsed().as_millis(),
-            rgb_templates = n_rgb,
-            ir_templates = n_ir,
+            total_ms = t_match.elapsed().as_millis(),
+            templates = n_templates,
             "verify: reject"
         );
         Ok(false)
@@ -308,64 +258,36 @@ impl TrueIdApp {
         );
 
         let t_cap = Instant::now();
-        let burst = self.camera.capture(spec)?;
+
+        let frames = self.video.capture(spec)?;
         tracing::info!(
-            rgb_returned = burst.rgb.as_ref().map_or(0, |v| v.len()),
-            has_ir = burst.ir.is_some(),
+            frame_count = frames.len(),
             capture_ms = t_cap.elapsed().as_millis(),
             "enroll: frames from camera"
         );
-        let frames_rgb = burst.rgb.unwrap_or_default();
-        let frames_ir = burst.ir.unwrap_or_default();
 
-        let embeddings_rgb = if frames_rgb.is_empty() {
+        let embeddings = if frames.is_empty() {
             Vec::new()
         } else {
-            self.collect_embeddings(&frames_rgb, "enroll_rgb")?
-        };
-        let embeddings_ir = if frames_ir.is_empty() {
-            Vec::new()
-        } else {
-            self.collect_embeddings(&frames_ir, "enroll_ir")?
+            self.collect_embeddings(&frames, "enroll")?
         };
 
-        if embeddings_rgb.is_empty() && embeddings_ir.is_empty() {
+        if embeddings.is_empty() {
             tracing::warn!("enroll: no usable embeddings from any frame");
             return Err(crate::domain::error::DomainError::NoUsableFaceInCapture.into());
         }
 
-        let template_rgb = if embeddings_rgb.is_empty() {
-            None
-        } else {
-            Some(
-                crate::domain::Embedding::try_average(&embeddings_rgb)
-                    .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?,
-            )
-        };
-        let template_ir = if embeddings_ir.is_empty() {
-            None
-        } else {
-            Some(
-                crate::domain::Embedding::try_average(&embeddings_ir)
-                    .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?,
-            )
-        };
+        let template = crate::domain::Embedding::try_average(&embeddings)
+            .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
 
         tracing::info!(
-            from_rgb_frames = embeddings_rgb.len(),
-            from_ir_frames = embeddings_ir.len(),
-            rgb_template_dim = template_rgb.as_ref().map(|t| t.0.len()).unwrap_or(0),
-            ir_template_dim = template_ir.as_ref().map(|t| t.0.len()).unwrap_or(0),
-            "enroll: templates averaged"
+            from_frames = embeddings.len(),
+            template_dim = template.0.len(),
+            "enroll: template averaged"
         );
 
         let mut bundle = TemplateBundle::empty();
-        if let Some(t) = template_rgb {
-            bundle.rgb.push(t);
-        }
-        if let Some(t) = template_ir {
-            bundle.ir.push(t);
-        }
+        bundle.templates.push(template);
         self.template_store.save_all(user, &bundle)?;
         tracing::info!("enroll: stored ok");
         Ok(())
@@ -411,12 +333,11 @@ impl TrueIdApp {
             .filter(|b| b.has_any_enrollment())
             .ok_or(crate::domain::error::DomainError::NoEnrolledTemplate)?;
         tracing::debug!(
-            existing_rgb = bundle.rgb.len(),
-            existing_ir = bundle.ir.len(),
+            existing_templates = bundle.templates.len(),
             "add_template: loaded existing"
         );
 
-        return self.add_template_batch(user, bundle)   
+        return self.add_template_batch(user, bundle);
     }
 
     fn add_template_batch(
@@ -432,48 +353,31 @@ impl TrueIdApp {
         );
 
         let t_cap = Instant::now();
-        let burst = self.camera.capture(spec)?;
+        let frames = self.video.capture(spec)?;
         tracing::info!(
-            rgb_returned = burst.rgb.as_ref().map_or(0, |v| v.len()),
-            has_ir = burst.ir.is_some(),
+            frame_count = frames.len(),
             capture_ms = t_cap.elapsed().as_millis(),
             "add_template: frames from camera"
         );
 
-        let embeddings_rgb = match burst.rgb.as_deref() {
-            Some(frames) if !frames.is_empty() => {
-                self.collect_embeddings(frames, "add_template_rgb")?
-            }
-            _ => Vec::new(),
-        };
-        let embeddings_ir = match burst.ir.as_deref() {
-            Some(frames) if !frames.is_empty() => {
-                self.collect_embeddings(frames, "add_template_ir")?
-            }
-            _ => Vec::new(),
+        let embeddings = if frames.is_empty() {
+            Vec::new()
+        } else {
+            self.collect_embeddings(&frames, "add_template")?
         };
 
-        if embeddings_rgb.is_empty() && embeddings_ir.is_empty() {
+        if embeddings.is_empty() {
             tracing::warn!("add_template: no usable embeddings from any frame");
             return Err(crate::domain::error::DomainError::NoUsableFaceInCapture.into());
         }
 
-        if !embeddings_rgb.is_empty() {
-            let new_rgb = crate::domain::Embedding::try_average(&embeddings_rgb)
-                .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
-            bundle.rgb.push(new_rgb);
-        }
-
-        if !embeddings_ir.is_empty() {
-            let new_ir = crate::domain::Embedding::try_average(&embeddings_ir)
-                .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
-            bundle.ir.push(new_ir);
-        }
+        let new_t = crate::domain::Embedding::try_average(&embeddings)
+            .ok_or(crate::domain::error::DomainError::EmbeddingAggregationFailed)?;
+        bundle.templates.push(new_t);
 
         tracing::info!(
-            rgb_templates = bundle.rgb.len(),
-            ir_templates = bundle.ir.len(),
-            template_dim = bundle.rgb.last().map(|e| e.0.len()).unwrap_or(0),
+            templates = bundle.templates.len(),
+            template_dim = bundle.templates.last().map(|e| e.0.len()).unwrap_or(0),
             "add_template: appended templates"
         );
         self.template_store.save_all(user, &bundle)?;
@@ -491,9 +395,9 @@ mod tests {
         BoundingBox, Embedding, FaceDetection, Frame, PixelFormat, StreamModality, TemplateBundle,
     };
     use crate::ports::{
-        AlignError, CameraCapture, CaptureError, CaptureSpec, CapturedBurst, DetectError,
-        EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedError, FaceEmbedder, Health,
-        HealthStatus, LivenessChecker, LivenessError, StoreError, TemplateStore,
+        AlignError, CaptureError, CaptureSpec, DetectError, EmbeddingMatcher, FaceAligner,
+        FaceDetector, FaceEmbedError, FaceEmbedder, Health, HealthStatus, LivenessChecker,
+        LivenessError, StoreError, TemplateStore, VideoSource,
     };
 
     struct OkHealth;
@@ -512,9 +416,14 @@ mod tests {
         }
     }
 
-    struct TestCamera;
-    impl CameraCapture for TestCamera {
-        fn capture(&self, spec: CaptureSpec) -> Result<CapturedBurst, CaptureError> {
+    struct TestVideo;
+
+    impl VideoSource for TestVideo {
+        fn modality(&self) -> StreamModality {
+            StreamModality::Rgb
+        }
+
+        fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError> {
             let spec = spec.validate()?;
             let f = Frame {
                 modality: StreamModality::Rgb,
@@ -523,36 +432,7 @@ mod tests {
                 format: PixelFormat::Gray8,
                 bytes: vec![0],
             };
-            Ok(CapturedBurst {
-                rgb: Some(vec![f; spec.frame_count as usize]),
-                ir: None,
-            })
-        }
-    }
-
-    struct TestCameraRgbIr;
-    impl CameraCapture for TestCameraRgbIr {
-        fn capture(&self, spec: CaptureSpec) -> Result<CapturedBurst, CaptureError> {
-            let spec = spec.validate()?;
-            let n = spec.frame_count as usize;
-            let rgb = Frame {
-                modality: StreamModality::Rgb,
-                width: 1,
-                height: 1,
-                format: PixelFormat::Gray8,
-                bytes: vec![0],
-            };
-            let ir = Frame {
-                modality: StreamModality::Ir,
-                width: 1,
-                height: 1,
-                format: PixelFormat::Gray8,
-                bytes: vec![1],
-            };
-            Ok(CapturedBurst {
-                rgb: Some(vec![rgb; n]),
-                ir: Some(vec![ir; n]),
-            })
+            Ok(vec![f; spec.frame_count as usize])
         }
     }
 
@@ -599,24 +479,12 @@ mod tests {
 
     impl MemoryStore {
         fn with_template(user: UserId, emb: Embedding) -> Self {
-            Self::with_rgb_templates(user, vec![emb])
-        }
-
-        fn with_rgb_templates(user: UserId, rgb: Vec<Embedding>) -> Self {
-            let mut m = std::collections::HashMap::new();
-            m.insert(user, TemplateBundle { rgb, ir: vec![] });
-            Self {
-                inner: std::sync::Mutex::new(m),
-            }
+            Self::with_templates(user, vec![emb])
         }
 
         fn with_templates(user: UserId, templates: Vec<Embedding>) -> Self {
-            Self::with_rgb_templates(user, templates)
-        }
-
-        fn with_rgb_ir(user: UserId, rgb: Vec<Embedding>, ir: Vec<Embedding>) -> Self {
             let mut m = std::collections::HashMap::new();
-            m.insert(user, TemplateBundle { rgb, ir });
+            m.insert(user, TemplateBundle { templates });
             Self {
                 inner: std::sync::Mutex::new(m),
             }
@@ -651,27 +519,11 @@ mod tests {
         }
     }
 
-    /// Test matcher: high-x templates quorum with low similarity; others do not.
-    struct AsymmetricWeakRgbMatcher;
-    impl EmbeddingMatcher for AsymmetricWeakRgbMatcher {
-        fn matches(&self, _probe: &Embedding, enrolled: &Embedding) -> bool {
-            enrolled.0.first().copied().unwrap_or(0.0) >= 0.99
-        }
-
-        fn similarity(&self, _probe: &Embedding, enrolled: &Embedding) -> Option<f32> {
-            if enrolled.0.first().copied().unwrap_or(0.0) >= 0.99 {
-                Some(0.36)
-            } else {
-                Some(0.2)
-            }
-        }
-    }
-
     fn app_with_store(store: Arc<MemoryStore>, embed_out: Embedding) -> TrueIdApp {
         let template_store: Arc<dyn TemplateStore> = store;
         TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(OkHealth),
-            camera: Arc::new(TestCamera),
+            video: Arc::new(TestVideo),
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
@@ -679,7 +531,6 @@ mod tests {
             template_store,
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
-            modality_fusion: ModalityFusionConfig::default(),
         })
     }
 
@@ -695,7 +546,7 @@ mod tests {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(BadHealth),
-            camera: Arc::new(TestCamera),
+            video: Arc::new(TestVideo),
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
@@ -705,7 +556,6 @@ mod tests {
             template_store: store,
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
-            modality_fusion: ModalityFusionConfig::default(),
         });
         let err = app.ping().unwrap_err();
         assert!(err.to_string().contains("camera offline"));
@@ -747,8 +597,7 @@ mod tests {
         let app = app_with_store(Arc::clone(&store), emb.clone());
         app.enroll(&UserId(2000)).unwrap();
         let loaded = store.load_all(&UserId(2000)).unwrap().unwrap();
-        assert_eq!(loaded.rgb, vec![emb]);
-        assert!(loaded.ir.is_empty());
+        assert_eq!(loaded.templates, vec![emb]);
     }
 
     #[test]
@@ -798,32 +647,6 @@ mod tests {
     }
 
     #[test]
-    fn verify_fusion_weighted_score_ignores_quorum_as_one() {
-        let probe = Embedding(vec![0.5, 0.5, 0.5]);
-        let t_rgb = Embedding(vec![1.0, 0.0, 0.0]);
-        let t_ir = Embedding(vec![0.0, 0.0, 1.0]);
-        let store = Arc::new(MemoryStore::with_rgb_ir(
-            UserId(7100),
-            vec![t_rgb],
-            vec![t_ir],
-        ));
-        let template_store: Arc<dyn TemplateStore> = store;
-        let app = TrueIdApp::new(super::TrueIdAppDeps {
-            health: Arc::new(OkHealth),
-            camera: Arc::new(TestCameraRgbIr),
-            detector: Arc::new(FullFrameDetector),
-            aligner: Arc::new(CloneAligner),
-            liveness: Arc::new(AlwaysLive),
-            face_embedder: Arc::new(ConstFaceEmbedder { out: probe.clone() }),
-            template_store,
-            matcher: Arc::new(AsymmetricWeakRgbMatcher),
-            capture: MultiFramePolicy::default(),
-            modality_fusion: ModalityFusionConfig::default(),
-        });
-        assert!(!app.verify(&UserId(7100)).unwrap());
-    }
-
-    #[test]
     fn add_template_requires_prior_enrollment() {
         let store = Arc::new(MemoryStore::empty());
         let app = app_with_store(store, Embedding(vec![1.0, 0.0]));
@@ -842,10 +665,9 @@ mod tests {
         let app = app_with_store(Arc::clone(&store), second.clone());
         app.add_template(&UserId(9000)).unwrap();
         let all = store.load_all(&UserId(9000)).unwrap().unwrap();
-        assert_eq!(all.rgb.len(), 2);
-        assert_eq!(all.rgb[0], first);
-        assert_eq!(all.rgb[1], second);
-        assert!(all.ir.is_empty());
+        assert_eq!(all.templates.len(), 2);
+        assert_eq!(all.templates[0], first);
+        assert_eq!(all.templates[1], second);
     }
 
     #[test]
@@ -860,7 +682,7 @@ mod tests {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(OkHealth),
-            camera: Arc::new(TestCamera),
+            video: Arc::new(TestVideo),
             detector: Arc::new(NoFaceDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
@@ -870,7 +692,6 @@ mod tests {
             template_store: store,
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
-            modality_fusion: ModalityFusionConfig::default(),
         });
         let err = app.enroll(&UserId(6000)).unwrap_err();
         assert!(matches!(
@@ -884,7 +705,7 @@ mod tests {
         let store: Arc<dyn TemplateStore> = Arc::new(MemoryStore::empty());
         let app = TrueIdApp::new(super::TrueIdAppDeps {
             health: Arc::new(BadHealth),
-            camera: Arc::new(TestCamera),
+            video: Arc::new(TestVideo),
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
             liveness: Arc::new(AlwaysLive),
@@ -894,7 +715,6 @@ mod tests {
             template_store: store,
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
-            modality_fusion: ModalityFusionConfig::default(),
         });
         let err = app.enroll(&UserId(5000)).unwrap_err();
         assert!(err.to_string().contains("camera offline"));

@@ -8,8 +8,10 @@ use trueid_core::ports::{StoreError, TemplateStore};
 use trueid_core::{Embedding, TemplateBundle, UserId};
 
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct TemplateFile {
+    #[serde(default)]
+    templates: Vec<Vec<f32>>,
+    /// Older format (`templates` absent): one stream only; both may exist from legacy dual-RGB+IR enrolls.
     #[serde(default)]
     rgb: Vec<Vec<f32>>,
     #[serde(default)]
@@ -18,16 +20,21 @@ struct TemplateFile {
 
 impl TemplateFile {
     fn into_bundle(self) -> TemplateBundle {
+        let raw = if !self.templates.is_empty() {
+            self.templates
+        } else {
+            self.rgb.into_iter().chain(self.ir).collect()
+        };
         TemplateBundle {
-            rgb: self.rgb.into_iter().map(Embedding).collect(),
-            ir: self.ir.into_iter().map(Embedding).collect(),
+            templates: raw.into_iter().map(Embedding).collect(),
         }
     }
 
     fn from_bundle(bundle: &TemplateBundle) -> Self {
         Self {
-            rgb: bundle.rgb.iter().map(|e| e.0.clone()).collect(),
-            ir: bundle.ir.iter().map(|e| e.0.clone()).collect(),
+            templates: bundle.templates.iter().map(|e| e.0.clone()).collect(),
+            rgb: Vec::new(),
+            ir: Vec::new(),
         }
     }
 }
@@ -129,8 +136,7 @@ mod tests {
         let store = FileTemplateStore::open(&dir).unwrap();
         let emb = Embedding(vec![0.25, 0.5, 0.75]);
         let bundle = TemplateBundle {
-            rgb: vec![emb.clone()],
-            ir: vec![],
+            templates: vec![emb.clone()],
         };
         store.save_all(&uid, &bundle).unwrap();
         assert_eq!(store.load_all(&uid).unwrap(), Some(bundle));
@@ -146,8 +152,7 @@ mod tests {
         let a = Embedding(vec![1.0, 0.0]);
         let b = Embedding(vec![0.0, 1.0]);
         let bundle = TemplateBundle {
-            rgb: vec![a.clone(), b.clone()],
-            ir: vec![],
+            templates: vec![a.clone(), b.clone()],
         };
         store.save_all(&uid, &bundle).unwrap();
         assert_eq!(store.load_all(&uid).unwrap(), Some(bundle));

@@ -18,9 +18,3 @@ pub struct Frame {
     pub format: PixelFormat,
     pub bytes: Vec<u8>,
 }
-
-#[derive(Debug, Clone)]
-pub struct FramePair {
-    pub rgb: Frame,
-    pub ir: Option<Frame>,
-}

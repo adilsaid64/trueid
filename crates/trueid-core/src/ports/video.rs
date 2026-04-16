@@ -45,13 +45,3 @@ pub trait VideoSource: Send + Sync {
 
     fn capture(&self, spec: CaptureSpec) -> Result<Vec<Frame>, CaptureError>;
 }
-
-/// One burst; `ir` absent without IR hardware. Streams not frame-synced.
-pub struct CapturedBurst {
-    pub rgb: Option<Vec<Frame>>,
-    pub ir: Option<Vec<Frame>>,
-}
-
-pub trait CameraCapture: Send + Sync {
-    fn capture(&self, spec: CaptureSpec) -> Result<CapturedBurst, CaptureError>;
-}

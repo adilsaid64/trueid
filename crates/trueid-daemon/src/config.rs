@@ -64,7 +64,6 @@ pub struct PathsConfig {
 #[serde(default)]
 pub struct VerificationConfig {
     pub match_threshold: f32,
-    pub fusion: ModalityFusionYaml,
     /// Enroll vs verify burst lengths (warmup discard + frame count). Matches [`trueid_core::MultiFramePolicy`] defaults when omitted.
     pub capture: CapturePolicyYaml,
 }
@@ -100,24 +99,6 @@ impl Default for CapturePolicyYaml {
                 frame_count: 5,
             },
             verify: CaptureSpecYaml::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct ModalityFusionYaml {
-    pub weight_rgb: f32,
-    pub weight_ir: f32,
-    pub fusion_threshold: f32,
-}
-
-impl Default for ModalityFusionYaml {
-    fn default() -> Self {
-        Self {
-            weight_rgb: 0.45,
-            weight_ir: 0.55,
-            fusion_threshold: 0.5,
         }
     }
 }
@@ -176,7 +157,6 @@ impl Default for VerificationConfig {
     fn default() -> Self {
         Self {
             match_threshold: 0.70,
-            fusion: ModalityFusionYaml::default(),
             capture: CapturePolicyYaml::default(),
         }
     }

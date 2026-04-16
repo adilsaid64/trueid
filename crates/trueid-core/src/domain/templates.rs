@@ -1,34 +1,24 @@
 use super::Embedding;
 
-/// RGB and IR template lists; verify matches each side separately.
+/// All probe templates for one user (from the active camera stream at enrollment time).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemplateBundle {
-    pub rgb: Vec<Embedding>,
-    pub ir: Vec<Embedding>,
+    pub templates: Vec<Embedding>,
 }
 
 impl TemplateBundle {
     pub fn empty() -> Self {
         Self {
-            rgb: Vec::new(),
-            ir: Vec::new(),
+            templates: Vec::new(),
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.rgb.is_empty() && self.ir.is_empty()
+        self.templates.is_empty()
     }
 
     pub fn has_any_enrollment(&self) -> bool {
         !self.is_empty()
-    }
-
-    pub fn has_rgb_enrollment(&self) -> bool {
-        !self.rgb.is_empty()
-    }
-
-    pub fn has_ir_enrollment(&self) -> bool {
-        !self.ir.is_empty()
     }
 }
 

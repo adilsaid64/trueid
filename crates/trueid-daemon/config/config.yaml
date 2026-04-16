@@ -35,11 +35,6 @@ verification:
     verify:
       warmup_discard: 2
       frame_count: 3
-  fusion:
-    # only used when both rgb and ir templates exist
-    weight_rgb: 0.05
-    weight_ir: 0.95
-    fusion_threshold: 0.5
 
 development:
   mock_embedder: false

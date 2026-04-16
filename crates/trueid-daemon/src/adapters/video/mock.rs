@@ -6,10 +6,10 @@ pub struct MockVideoSource {
 }
 
 impl MockVideoSource {
-    pub fn default_gray() -> Self {
+    pub fn with_modality(modality: StreamModality) -> Self {
         Self {
             frame: Frame {
-                modality: StreamModality::Rgb,
+                modality,
                 width: 2,
                 height: 2,
                 format: PixelFormat::Gray8,

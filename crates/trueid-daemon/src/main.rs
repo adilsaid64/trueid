@@ -4,15 +4,13 @@ use std::sync::Arc;
 
 use trueid_core::ports::{FaceAligner, FaceDetector, FaceEmbedder};
 use trueid_core::{
-    CameraCapture, CaptureSpec, Embedding, ModalityFusionConfig,
-    MultiFramePolicy, StreamModality, TrueIdApp, TrueIdAppDeps,
+    CaptureSpec, Embedding, MultiFramePolicy, StreamModality, TrueIdApp, TrueIdAppDeps, VideoSource,
 };
 use trueid_ipc::SOCKET_PATH;
 
 mod adapters;
 mod config;
 mod ipc;
-
 
 fn init_tracing(level: &str) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -45,76 +43,46 @@ fn main() -> std::io::Result<()> {
         .filter(|s| !s.is_empty())
         .map(PathBuf::from);
 
-    if !cfg.camera.enable_rgb && !cfg.camera.enable_ir {
+    let use_rgb = cfg.camera.enable_rgb;
+    let use_ir = cfg.camera.enable_ir;
+    if use_rgb == use_ir {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "invalid config: at least one of `camera.enable_rgb` or `camera.enable_ir` must be true",
+            "invalid config: enable exactly one of `camera.enable_rgb` or `camera.enable_ir`",
         ));
     }
 
-    let video_rgb: Option<Arc<dyn trueid_core::ports::VideoSource>> = if cfg.camera.enable_rgb {
-        Some(if cfg.camera.mock {
-            Arc::new(adapters::MockVideoSource::default_gray())
-        } else {
-            let index = cfg.camera.rgb_index;
-            Arc::new(
-                adapters::V4lVideoSource::open_with_dimensions(
-                    index,
-                    cap_w,
-                    cap_h,
-                    StreamModality::Rgb,
-                    v4l_rotate,
-                    v4l_flip,
-                    debug_v4l.clone(),
-                )
-                .map_err(|e| {
-                    std::io::Error::other(format!(
-                        "camera open failed (index {index}): {e}. \
-                         Set `camera.mock: true` in config to run without a device."
-                    ))
-                })?,
-            )
-        })
+    let modality = if use_rgb {
+        StreamModality::Rgb
     } else {
-        None
+        StreamModality::Ir
+    };
+    let index = if use_rgb {
+        cfg.camera.rgb_index
+    } else {
+        cfg.camera.ir_index
     };
 
-    let video_ir: Option<Arc<dyn trueid_core::ports::VideoSource>> = if cfg.camera.enable_ir {
-        Some(if cfg.camera.mock {
-            Arc::new(adapters::MockVideoSource::default_gray())
-        } else {
-            let index = cfg.camera.ir_index;
-            Arc::new(
-                adapters::V4lVideoSource::open_with_dimensions(
-                    index,
-                    cap_w,
-                    cap_h,
-                    StreamModality::Ir,
-                    v4l_rotate,
-                    v4l_flip,
-                    debug_v4l.clone(),
-                )
-                .map_err(|e| {
-                    std::io::Error::other(format!("IR camera open failed (index {index}): {e}"))
-                })?,
-            )
-        })
+    let video: Arc<dyn VideoSource> = if cfg.camera.mock {
+        Arc::new(adapters::MockVideoSource::with_modality(modality))
     } else {
-        None
-    };
-
-    let camera: Arc<dyn CameraCapture> = match (video_rgb, video_ir) {
-        (Some(video_rgb), Some(video_ir)) => Arc::new(adapters::ParallelRgbIrCameraCapture::new(
-            video_rgb, video_ir,
-        )),
-        (Some(video_rgb), None) => Arc::new(adapters::RgbOnlyCameraCapture::new(video_rgb)),
-        (None, Some(video_ir)) => Arc::new(adapters::IROnlyCameraCapture::new(video_ir)),
-        (None, None) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "invalid config: at least one of `camera.enable_rgb` or `camera.enable_ir` must be true",
-            ));
-        }
+        Arc::new(
+            adapters::V4lVideoSource::open_with_dimensions(
+                index,
+                cap_w,
+                cap_h,
+                modality,
+                v4l_rotate,
+                v4l_flip,
+                debug_v4l.clone(),
+            )
+            .map_err(|e| {
+                std::io::Error::other(format!(
+                    "camera open failed (index {index}): {e}. \
+                     Set `camera.mock: true` in config to run without a device."
+                ))
+            })?,
+        )
     };
 
     let face_embedder: Arc<dyn FaceEmbedder> = if cfg.development.mock_embedder {
@@ -155,12 +123,6 @@ fn main() -> std::io::Result<()> {
     };
     let liveness = Arc::new(adapters::AlwaysLiveLiveness);
 
-    let modality_fusion = ModalityFusionConfig {
-        weight_rgb: cfg.verification.fusion.weight_rgb,
-        weight_ir: cfg.verification.fusion.weight_ir,
-        fusion_threshold: cfg.verification.fusion.fusion_threshold,
-    };
-
     let capture = MultiFramePolicy {
         enroll: CaptureSpec::new(
             cfg.verification.capture.enroll.warmup_discard,
@@ -174,7 +136,7 @@ fn main() -> std::io::Result<()> {
 
     let app = Arc::new(TrueIdApp::new(TrueIdAppDeps {
         health,
-        camera,
+        video,
         detector,
         aligner,
         liveness,
@@ -182,7 +144,6 @@ fn main() -> std::io::Result<()> {
         template_store,
         matcher,
         capture,
-        modality_fusion,
     }));
 
     ipc::run_unix_socket(SOCKET_PATH, app)

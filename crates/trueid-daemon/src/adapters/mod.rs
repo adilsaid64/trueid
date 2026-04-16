@@ -16,7 +16,4 @@ pub use health::DefaultHealth;
 pub use liveness::AlwaysLiveLiveness;
 pub use matcher::CosineMatcher;
 pub use template_store::FileTemplateStore;
-pub use video::{
-    IROnlyCameraCapture, MockVideoSource, ParallelRgbIrCameraCapture, RgbOnlyCameraCapture,
-    V4lVideoSource,
-};
+pub use video::{MockVideoSource, V4lVideoSource};
