@@ -12,34 +12,8 @@ pub struct Config {
     pub camera: CameraConfig,
     pub models: ModelsConfig,
     pub paths: PathsConfig,
-    pub pipeline: PipelineConfig,
     pub verification: VerificationConfig,
     pub development: DevelopmentConfig,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct PipelineConfig {
-    /// `batch` — burst capture; `streaming` — reserved (returns not implemented until built).
-    pub enroll: PipelineModeYaml,
-    pub verify: PipelineModeYaml,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum PipelineModeYaml {
-    #[default]
-    Batch,
-    Streaming,
-}
-
-impl Default for PipelineConfig {
-    fn default() -> Self {
-        Self {
-            enroll: PipelineModeYaml::Batch,
-            verify: PipelineModeYaml::Batch,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

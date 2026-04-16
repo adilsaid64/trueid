@@ -8,7 +8,6 @@ use crate::ports::{
 };
 
 use super::error::AppError;
-use super::pipeline::{EnrollPipelineMode, VerifyPipelineMode};
 use super::verification_decision::{VerificationDecider, template_quorum_required};
 
 pub use super::verification_decision::ModalityFusionConfig;
@@ -41,8 +40,6 @@ pub struct TrueIdAppDeps {
     pub matcher: Arc<dyn EmbeddingMatcher>,
     pub capture: MultiFramePolicy,
     pub modality_fusion: ModalityFusionConfig,
-    pub enroll_pipeline: EnrollPipelineMode,
-    pub verify_pipeline: VerifyPipelineMode,
 }
 
 pub struct TrueIdApp {
@@ -55,8 +52,6 @@ pub struct TrueIdApp {
     template_store: Arc<dyn TemplateStore>,
     verification: VerificationDecider,
     capture: MultiFramePolicy,
-    enroll_pipeline: EnrollPipelineMode,
-    verify_pipeline: VerifyPipelineMode,
 }
 
 impl TrueIdApp {
@@ -71,8 +66,6 @@ impl TrueIdApp {
             template_store: deps.template_store,
             verification: VerificationDecider::new(deps.matcher.clone(), deps.modality_fusion),
             capture: deps.capture,
-            enroll_pipeline: deps.enroll_pipeline,
-            verify_pipeline: deps.verify_pipeline,
         }
     }
 
@@ -170,12 +163,7 @@ impl TrueIdApp {
             HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
         }
 
-        match self.verify_pipeline {
-            VerifyPipelineMode::Batch => self.verify_batch(user),
-            VerifyPipelineMode::Streaming => Err(AppError::PipelineNotImplemented(
-                "verify: streaming pipeline not implemented yet",
-            )),
-        }
+        return self.verify_batch(user)
     }
 
     fn verify_batch(&self, user: &UserId) -> Result<bool, AppError> {
@@ -308,12 +296,7 @@ impl TrueIdApp {
             return Err(crate::domain::error::DomainError::AlreadyEnrolled.into());
         }
 
-        match self.enroll_pipeline {
-            EnrollPipelineMode::Batch => self.enroll_batch(user),
-            EnrollPipelineMode::Streaming => Err(AppError::PipelineNotImplemented(
-                "enroll: streaming pipeline not implemented yet",
-            )),
-        }
+        return self.enroll_batch(user);
     }
 
     fn enroll_batch(&self, user: &UserId) -> Result<(), AppError> {
@@ -433,12 +416,7 @@ impl TrueIdApp {
             "add_template: loaded existing"
         );
 
-        match self.enroll_pipeline {
-            EnrollPipelineMode::Batch => self.add_template_batch(user, bundle),
-            EnrollPipelineMode::Streaming => Err(AppError::PipelineNotImplemented(
-                "add_template: streaming pipeline not implemented yet",
-            )),
-        }
+        return self.add_template_batch(user, bundle)   
     }
 
     fn add_template_batch(
@@ -508,7 +486,6 @@ impl TrueIdApp {
 mod tests {
     use super::*;
     use crate::application::error::AppError;
-    use crate::application::pipeline::{EnrollPipelineMode, VerifyPipelineMode};
     use crate::domain::error::DomainError;
     use crate::domain::{
         BoundingBox, Embedding, FaceDetection, Frame, PixelFormat, StreamModality, TemplateBundle,
@@ -703,8 +680,6 @@ mod tests {
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
             modality_fusion: ModalityFusionConfig::default(),
-            enroll_pipeline: EnrollPipelineMode::Batch,
-            verify_pipeline: VerifyPipelineMode::Batch,
         })
     }
 
@@ -731,8 +706,6 @@ mod tests {
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
             modality_fusion: ModalityFusionConfig::default(),
-            enroll_pipeline: EnrollPipelineMode::Batch,
-            verify_pipeline: VerifyPipelineMode::Batch,
         });
         let err = app.ping().unwrap_err();
         assert!(err.to_string().contains("camera offline"));
@@ -846,8 +819,6 @@ mod tests {
             matcher: Arc::new(AsymmetricWeakRgbMatcher),
             capture: MultiFramePolicy::default(),
             modality_fusion: ModalityFusionConfig::default(),
-            enroll_pipeline: EnrollPipelineMode::Batch,
-            verify_pipeline: VerifyPipelineMode::Batch,
         });
         assert!(!app.verify(&UserId(7100)).unwrap());
     }
@@ -900,8 +871,6 @@ mod tests {
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
             modality_fusion: ModalityFusionConfig::default(),
-            enroll_pipeline: EnrollPipelineMode::Batch,
-            verify_pipeline: VerifyPipelineMode::Batch,
         });
         let err = app.enroll(&UserId(6000)).unwrap_err();
         assert!(matches!(
@@ -926,34 +895,8 @@ mod tests {
             matcher: Arc::new(ExactMatcher),
             capture: MultiFramePolicy::default(),
             modality_fusion: ModalityFusionConfig::default(),
-            enroll_pipeline: EnrollPipelineMode::Batch,
-            verify_pipeline: VerifyPipelineMode::Batch,
         });
         let err = app.enroll(&UserId(5000)).unwrap_err();
         assert!(err.to_string().contains("camera offline"));
-    }
-
-    #[test]
-    fn enroll_streaming_returns_not_implemented() {
-        let store = Arc::new(MemoryStore::empty());
-        let template_store: Arc<dyn TemplateStore> = store;
-        let app = TrueIdApp::new(super::TrueIdAppDeps {
-            health: Arc::new(OkHealth),
-            camera: Arc::new(TestCamera),
-            detector: Arc::new(FullFrameDetector),
-            aligner: Arc::new(CloneAligner),
-            liveness: Arc::new(AlwaysLive),
-            face_embedder: Arc::new(ConstFaceEmbedder {
-                out: Embedding(vec![1.0, 0.0]),
-            }),
-            template_store,
-            matcher: Arc::new(ExactMatcher),
-            capture: MultiFramePolicy::default(),
-            modality_fusion: ModalityFusionConfig::default(),
-            enroll_pipeline: EnrollPipelineMode::Streaming,
-            verify_pipeline: VerifyPipelineMode::Batch,
-        });
-        let err = app.enroll(&UserId(42)).unwrap_err();
-        assert!(matches!(err, AppError::PipelineNotImplemented(_)));
     }
 }

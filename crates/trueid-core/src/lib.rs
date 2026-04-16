@@ -4,7 +4,6 @@ pub mod ports;
 
 pub use application::app::{MultiFramePolicy, TrueIdApp, TrueIdAppDeps};
 pub use application::error::AppError;
-pub use application::pipeline::{EnrollPipelineMode, VerifyPipelineMode};
 pub use application::verification_decision::{
     BurstVerificationOutcome, ModalityFusionConfig, VerificationDecider,
 };

@@ -19,11 +19,6 @@ models:
   face_embedding: /var/lib/trueid/models/face_embedding.onnx
   face_detector: /var/lib/trueid/models/face_detection_yunet_2023mar.onnx
 
-# batch = current burst capture; streaming = reserved (not implemented yet).
-pipeline:
-  enroll: batch
-  verify: batch
-
 paths:
   templates: /var/lib/trueid/templates
   # debug_aligned_faces: /tmp/trueid-aligned

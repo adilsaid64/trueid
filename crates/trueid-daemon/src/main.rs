@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use trueid_core::ports::{FaceAligner, FaceDetector, FaceEmbedder};
 use trueid_core::{
-    CameraCapture, CaptureSpec, Embedding, EnrollPipelineMode, ModalityFusionConfig,
-    MultiFramePolicy, StreamModality, TrueIdApp, TrueIdAppDeps, VerifyPipelineMode,
+    CameraCapture, CaptureSpec, Embedding, ModalityFusionConfig,
+    MultiFramePolicy, StreamModality, TrueIdApp, TrueIdAppDeps,
 };
 use trueid_ipc::SOCKET_PATH;
 
@@ -13,7 +13,6 @@ mod adapters;
 mod config;
 mod ipc;
 
-use config::PipelineModeYaml;
 
 fn init_tracing(level: &str) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -173,15 +172,6 @@ fn main() -> std::io::Result<()> {
         ),
     };
 
-    let enroll_pipeline = match cfg.pipeline.enroll {
-        PipelineModeYaml::Batch => EnrollPipelineMode::Batch,
-        PipelineModeYaml::Streaming => EnrollPipelineMode::Streaming,
-    };
-    let verify_pipeline = match cfg.pipeline.verify {
-        PipelineModeYaml::Batch => VerifyPipelineMode::Batch,
-        PipelineModeYaml::Streaming => VerifyPipelineMode::Streaming,
-    };
-
     let app = Arc::new(TrueIdApp::new(TrueIdAppDeps {
         health,
         camera,
@@ -193,8 +183,6 @@ fn main() -> std::io::Result<()> {
         matcher,
         capture,
         modality_fusion,
-        enroll_pipeline,
-        verify_pipeline,
     }));
 
     ipc::run_unix_socket(SOCKET_PATH, app)
