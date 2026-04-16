@@ -27,9 +27,9 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - run: cargo test --workspace --all-features
-      - run: cargo clippy --workspace --all-features -- -D warnings
-      - run: cargo fmt --all -- --check
+      - run: make test
+      - run: make lint-clippy
+      - run: make lint-fmt
 
   release:
     needs: test

@@ -9,9 +9,13 @@ build:
 test:
 	$(CARGO) test --workspace --all-features
 
-lint:
+lint-clippy:
 	$(CARGO) clippy --workspace --all-features -- -D warnings
+
+lint-fmt:
 	$(CARGO) fmt --all -- --check
+
+lint: lint-clippy lint-fmt
 
 clean:
 	$(CARGO) clean
