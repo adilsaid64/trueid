@@ -160,7 +160,7 @@ impl TrueIdApp {
             HealthStatus::Degraded { reason } => return Err(AppError::Unhealthy(reason)),
         }
 
-        return self.verify_batch(user);
+        self.verify_batch(user)
     }
 
     fn verify_batch(&self, user: &UserId) -> Result<bool, AppError> {
@@ -246,7 +246,7 @@ impl TrueIdApp {
             return Err(crate::domain::error::DomainError::AlreadyEnrolled.into());
         }
 
-        return self.enroll_batch(user);
+        self.enroll_batch(user)
     }
 
     fn enroll_batch(&self, user: &UserId) -> Result<(), AppError> {
@@ -337,7 +337,7 @@ impl TrueIdApp {
             "add_template: loaded existing"
         );
 
-        return self.add_template_batch(user, bundle);
+        self.add_template_batch(user, bundle)
     }
 
     fn add_template_batch(
