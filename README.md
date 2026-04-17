@@ -135,5 +135,5 @@ sudo trueid-ctl add-template --uid 1000
 Add this line to the PAM service you want to enable trueid for:
 
 ```
-auth    [success=1 default=ignore] pam_trueid.so
+auth    sufficient    pam_trueid.so
 ```
