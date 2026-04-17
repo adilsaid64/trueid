@@ -8,8 +8,8 @@ pub const IPC_PROTOCOL_VERSION: u32 = 2;
 /// on Linux when [`UnixStream::read_line`] times out.
 pub const IPC_READ_TIMEOUT: Duration = Duration::from_secs(120);
 
-pub const SOCKET_PATH: &str = "/tmp/trueid.sock";
-// pub const SOCKET_PATH: &str = "/run/trueid/trueid.sock";
+// pub const SOCKET_PATH: &str = "/tmp/trueid.sock";
+pub const SOCKET_PATH: &str = "/run/trueid/trueid.sock";
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(tag = "op", rename_all = "snake_case")]

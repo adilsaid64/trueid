@@ -54,11 +54,22 @@ sudo dnf install ./trueid-*-fedora.rpm
 
 ### Build from source
 
+From the repo root:
+
 ```bash
 git clone https://github.com/adilsaid64/trueid
 cd trueid
-cargo build --release
+make build
 ```
+
+To **produce installable packages** the same way releases are built:
+
+| Target | Output |
+| ------ | ------ |
+| `make deb` | `target/debian/trueid-*-ubuntu.deb` (installs `cargo-deb` on first use) |
+| `make rpm` | `target/generate-rpm/trueid-*-fedora.rpm` (installs `cargo-generate-rpm` on first use) |
+
+Optional: set `VERSION` when naming artifacts, e.g. `make deb VERSION=v1.0.0` or `make rpm VERSION=v1.0.0`.
 
 ## Camera: RGB or IR
 

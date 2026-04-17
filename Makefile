@@ -34,8 +34,4 @@ rpm: build
 	FILE=$$(ls $(TARGET_DIR)/generate-rpm/*.rpm | head -n 1); \
 	mv $$FILE $(TARGET_DIR)/generate-rpm/trueid-$$VERSION-fedora.rpm
 
-install: build
-	sudo cp target/release/trueid-daemon /usr/bin/
-	sudo cp target/release/trueid-ctl /usr/bin/
-
 ci: test lint
