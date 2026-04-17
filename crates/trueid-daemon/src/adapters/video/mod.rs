@@ -1,5 +1,3 @@
-//! V4L and mock [`VideoSource`](trueid_core::ports::VideoSource) adapters.
-
 mod mock;
 mod v4l;
 

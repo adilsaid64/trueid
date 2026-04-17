@@ -10,7 +10,6 @@ use crate::ports::{
 use super::error::AppError;
 use super::verification_decision::{VerificationDecider, template_quorum_required};
 
-/// Warmup discard + max frames to pull from an open [`VideoSession`](crate::ports::VideoSession).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamLimits {
     pub warmup_discard: u32,
@@ -35,7 +34,6 @@ impl StreamLimits {
     }
 }
 
-/// Enroll vs verify streaming limits (same knobs as the old burst counts).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamingPolicy {
     pub enroll: StreamLimits,
@@ -51,7 +49,6 @@ impl Default for StreamingPolicy {
     }
 }
 
-/// [`TrueIdApp`] dependencies.
 pub struct TrueIdAppDeps {
     pub health: Arc<dyn Health>,
     pub video: Arc<dyn VideoSource>,
@@ -91,9 +88,6 @@ impl TrueIdApp {
         }
     }
 
-    /// Detect → align → liveness → embed. `None` if skipped (no face, not live, etc.).
-    ///
-    /// Single supported path from a captured `Frame` to an embedding (batch and future streaming).
     fn try_embed_from_frame(&self, frame: &Frame) -> Result<Option<Embedding>, AppError> {
         let t0 = Instant::now();
         let Some(det) = self.detector.detect_primary(frame)? else {

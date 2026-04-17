@@ -19,7 +19,6 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct LoggingConfig {
-    /// Default `tracing` filter (e.g. `info`).
     pub level: String,
 }
 
@@ -32,7 +31,6 @@ pub struct CameraConfig {
     pub enable_ir: bool,
     pub width: u32,
     pub height: u32,
-    /// Use in-memory frames instead of V4L (no `/dev/video*`).
     pub mock: bool,
     pub v4l: V4lConfig,
 }
@@ -41,7 +39,6 @@ pub struct CameraConfig {
 #[serde(default)]
 pub struct V4lConfig {
     pub rotate_180: bool,
-    /// Ignored when `rotate_180` is true.
     pub flip_vertical: bool,
 }
 

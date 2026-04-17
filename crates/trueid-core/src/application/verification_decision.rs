@@ -1,19 +1,12 @@
-//! Match templates against per-frame probe embeddings (batch or, later, streamed).
-//!
-//! [`VerificationDecider`] implements quorum over one template list. Capture and
-//! frame-to-embedding conversion live in `TrueIdApp` (`try_embed_from_frame` for batch mode).
-
 use std::sync::Arc;
 
 use crate::domain::{Embedding, TemplateBundle};
 use crate::ports::EmbeddingMatcher;
 
-/// Templates that must match one probe: ceil(n/2).
 pub fn template_quorum_required(template_count: usize) -> usize {
     template_count.div_ceil(2)
 }
 
-/// Outcome of evaluating a full burst (or accumulated probes) against enrolled templates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BurstVerificationOutcome {
     pub accepted: bool,
@@ -22,7 +15,6 @@ pub struct BurstVerificationOutcome {
     pub has_probe: bool,
 }
 
-/// Quorum over probe sequence vs [`TemplateBundle`].
 pub struct VerificationDecider {
     matcher: Arc<dyn EmbeddingMatcher>,
 }
@@ -32,7 +24,6 @@ impl VerificationDecider {
         Self { matcher }
     }
 
-    /// Evaluate probe sequence (e.g. one embedding per captured frame) and apply quorum rules.
     pub fn verify_burst(
         &self,
         bundle: &TemplateBundle,
@@ -64,7 +55,6 @@ impl VerificationDecider {
         }
     }
 
-    /// Max similarity vs templates and whether quorum holds for one probe.
     fn evaluate_probe_vs_templates(
         &self,
         probe: Option<&Embedding>,

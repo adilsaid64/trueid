@@ -7,7 +7,6 @@ use crate::ports::{
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    /// Reserved until streaming orchestration and capture session exist.
     #[error("pipeline not implemented: {0}")]
     PipelineNotImplemented(&'static str),
 

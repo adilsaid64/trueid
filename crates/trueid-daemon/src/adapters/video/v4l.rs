@@ -1,5 +1,3 @@
-//! V4L2 → `Frame`. MJPEG/YUYV/grey; optional rotate/flip from config. MJPEG + EXIF: sensor fix only when EXIF is identity.
-
 use std::io;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -25,12 +23,10 @@ pub struct V4lVideoSource {
     modality: StreamModality,
     pixel_fix: V4lPixelFix,
     debug_frames_root: Option<PathBuf>,
-    /// Only one [`VideoSession`] may be active per source (exclusive device use).
     busy: Arc<Mutex<bool>>,
 }
 
 impl V4lVideoSource {
-    /// `/dev/video{index}`. Format: MJPEG, YUYV, or grey.
     pub fn open_with_dimensions(
         index: u32,
         width: u32,
@@ -44,7 +40,6 @@ impl V4lVideoSource {
         let _active = negotiate_format(&dev, width, height, modality)?;
         let _stream =
             UserptrStream::with_buffers(&dev, Type::VideoCapture, 4).map_err(io_to_capture)?;
-        // Drop stream first so streaming is stopped; then device closes.
         drop(_stream);
         drop(dev);
 

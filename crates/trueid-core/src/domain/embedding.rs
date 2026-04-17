@@ -19,7 +19,6 @@ impl Embedding {
         self.0.len()
     }
 
-    /// Cheap scalar stats for logging / audit (probe vectors are often L2-normalized).
     pub fn summary(&self) -> EmbeddingSummary {
         let s = self.as_slice();
         if s.is_empty() {
@@ -49,7 +48,6 @@ impl Embedding {
         }
     }
 
-    /// Element-wise mean of same-dimension embeddings (e.g. enroll burst).
     pub fn try_average(embeddings: &[Self]) -> Option<Self> {
         if embeddings.is_empty() {
             return None;
