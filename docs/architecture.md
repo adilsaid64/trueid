@@ -6,11 +6,11 @@ Crates split **core** (ports + `TrueIdApp`) from **adapters** (camera, ONNX, fil
 
 On **verify**:
 
-1. **CameraCapture** — one burst (RGB + optional IR).
-2. **RGB** — detect → align → liveness → embed per frame → `Vec<Option<Embedding>>`.
-3. **IR** (if present) — same per IR frame.
-4. **Fusion** — per modality: max template similarity over the burst; quorum if any frame passes. RGB/IR not paired by index. Dual enroll: both quorums, or `weight_rgb * sim_r + weight_ir * sim_i >= threshold` on clamped sims; single enroll: quorum on that list.
-5. Accept if step 4 passes.
+1. **VideoSource** — open a streaming session (`open_session`) on the configured modality (RGB **or** IR).
+2. **Stream** — pull frames with `next_frame()` until capture limits are reached (warmup discard + max frames).
+3. **Pipeline** — detect → align → liveness → embed per frame → probe embeddings.
+4. **Match** — compare probe embeddings against stored templates (quorum-style decision over the stream).
+5. Return result.
 
 ---
 
@@ -18,14 +18,14 @@ On **verify**:
 
 * **TrueIdApp** — auth pipeline (`ping`, `enroll`, `verify`, `add_template`)
 * **Health** — readiness gate before capture
-* **CameraCapture** — `capture(CaptureSpec)` → **`CapturedBurst`** (`rgb` frames, optional `ir`)
-* **VideoSource** — single stream; used only inside camera adapters (V4L, mock)
+* **VideoSource** — open a streaming session; used inside camera adapters (V4L, mock)
+* **VideoSession** — `next_frame()` iterator-like interface
 * **FaceDetector** — primary face → `FaceDetection`
 * **FaceAligner** — crop/warp to a standard face image
 * **LivenessChecker** — spoof check on aligned crop
 * **FaceEmbedder** — face image → embedding
 * **EmbeddingMatcher** — compare embeddings (e.g. cosine vs threshold)
-* **TemplateStore** — `TemplateBundle` (`rgb` / `ir` lists)
+* **TemplateStore** — templates as a single list of embeddings per user (`TemplateBundle.templates`)
 
 Adapters implement V4L, mocks, ONNX, disk. The daemon reads `config.yaml`; core does not.
 
@@ -33,9 +33,9 @@ Adapters implement V4L, mocks, ONNX, disk. The daemon reads `config.yaml`; core 
 
 ## Capture model
 
-* One `CameraCapture::capture` = one burst.
-* RGB-only: one `VideoSource::capture`. RGB+IR: two threads, best-effort overlap (not frame-synced).
-* Optional warm-up discard, then N frames; no streaming API.
+* One operation (`enroll` / `verify` / `add_template`) opens one `VideoSource` streaming session.
+* Exactly one modality per deployment: RGB **or** IR (no fusion).
+* Optional warm-up discard, then at most `max_frames` frames are pulled from the session.
 
 ---
 
@@ -46,12 +46,15 @@ sequenceDiagram
     Client->>IPC: verify
     IPC->>App: verify()
 
-    App->>Cam: capture()
-    Cam-->>App: CapturedBurst (rgb, optional ir)
+    App->>VideoSource: open_session()
+    VideoSource-->>App: VideoSession
 
     App->>Store: load TemplateBundle
-    App->>App: pipeline all RGB frames → probes_rgb
-    App->>App: pipeline all IR frames → probes_ir (if any)
-    App->>App: fuse burst aggregates (matcher + quorum + weights)
+    loop up to max_frames (after warmup_discard)
+        App->>VideoSession: next_frame()
+        VideoSession-->>App: Frame
+        App->>App: pipeline frame → probe embedding
+    end
+    App->>App: decide via quorum matching over probes vs templates
     App-->>IPC: result
 ```
