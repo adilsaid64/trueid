@@ -88,8 +88,9 @@ impl TrueIdApp {
         }
     }
 
-    fn try_embed_from_frame(&self, frame: &Frame) -> Result<Option<Embedding>, AppError> {
+    fn try_align_face_from_frame(&self, frame: &Frame) -> Result<Option<Frame>, AppError> {
         let t0 = Instant::now();
+
         let Some(det) = self.detector.detect_primary(frame)? else {
             tracing::debug!(
                 w = frame.width,
@@ -108,12 +109,20 @@ impl TrueIdApp {
         );
 
         let t_align = Instant::now();
-        let aligned = self.aligner.align(frame, &det)?;
+        let aligned: Frame = self.aligner.align(frame, &det)?;
         tracing::trace!(
             elapsed_ms = t_align.elapsed().as_millis(),
             "pipeline: align ok"
         );
 
+        Ok(Some(aligned))
+    }
+
+    fn try_embed_from_frame(&self, frame: &Frame) -> Result<Option<Embedding>, AppError> {
+        let t0 = Instant::now();
+        let Some(aligned) = self.try_align_face_from_frame(frame)? else {
+            return Ok(None);
+        };
         match self.liveness.verify_live(&aligned) {
             Ok(()) => {}
             Err(LivenessError::NotLive) => {
@@ -321,7 +330,6 @@ impl TrueIdApp {
         Ok(())
     }
 
-    /// Add templates from a new capture; user must already be enrolled.
     pub fn add_template(&self, user: &UserId) -> Result<(), AppError> {
         let span = tracing::info_span!("add_template", uid = user.0);
         let _g = span.enter();
