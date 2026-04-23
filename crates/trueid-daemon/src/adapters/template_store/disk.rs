@@ -11,7 +11,6 @@ use trueid_core::{Embedding, TemplateBundle, UserId};
 struct TemplateFile {
     #[serde(default)]
     templates: Vec<Vec<f32>>,
-    /// Older format (`templates` absent): one stream only; both may exist from legacy dual-RGB+IR enrolls.
     #[serde(default)]
     rgb: Vec<Vec<f32>>,
     #[serde(default)]

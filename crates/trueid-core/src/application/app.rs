@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use crate::domain::{Embedding, Frame, TemplateBundle, UserId};
 use crate::ports::{
-    CaptureError, EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedder, Health, HealthStatus,
-    LivenessChecker, LivenessError, TemplateStore, VideoSource,
+    CaptureError, EmbeddingMatcher, FaceAligner, FaceDetector, FaceEmbedder, FacePoseEstimator,
+    Health, HealthStatus, LivenessChecker, LivenessError, PoseError, TemplateStore, VideoSource,
 };
 
 use super::error::AppError;
@@ -54,6 +54,7 @@ pub struct TrueIdAppDeps {
     pub video: Arc<dyn VideoSource>,
     pub detector: Arc<dyn FaceDetector>,
     pub aligner: Arc<dyn FaceAligner>,
+    pub pose_estimator: Arc<dyn FacePoseEstimator>,
     pub liveness: Arc<dyn LivenessChecker>,
     pub face_embedder: Arc<dyn FaceEmbedder>,
     pub template_store: Arc<dyn TemplateStore>,
@@ -66,6 +67,7 @@ pub struct TrueIdApp {
     video: Arc<dyn VideoSource>,
     detector: Arc<dyn FaceDetector>,
     aligner: Arc<dyn FaceAligner>,
+    pose_estimator: Arc<dyn FacePoseEstimator>,
     liveness: Arc<dyn LivenessChecker>,
     face_embedder: Arc<dyn FaceEmbedder>,
     template_store: Arc<dyn TemplateStore>,
@@ -80,6 +82,7 @@ impl TrueIdApp {
             video: deps.video,
             detector: deps.detector,
             aligner: deps.aligner,
+            pose_estimator: deps.pose_estimator,
             liveness: deps.liveness,
             face_embedder: deps.face_embedder,
             template_store: deps.template_store,
@@ -114,6 +117,18 @@ impl TrueIdApp {
             elapsed_ms = t_align.elapsed().as_millis(),
             "pipeline: align ok"
         );
+
+        match self.pose_estimator.check_frontal(&aligned, &det) {
+            Ok(()) => {}
+            Err(PoseError::NotFrontal) => {
+                tracing::debug!(
+                    elapsed_ms = t0.elapsed().as_millis(),
+                    "pipeline: pose → not frontal"
+                );
+                return Ok(None);
+            }
+            Err(e) => return Err(e.into()),
+        }
 
         Ok(Some(aligned))
     }
@@ -423,8 +438,8 @@ mod tests {
     };
     use crate::ports::{
         AlignError, CaptureError, DetectError, EmbeddingMatcher, FaceAligner, FaceDetector,
-        FaceEmbedError, FaceEmbedder, Health, HealthStatus, LivenessChecker, LivenessError,
-        StoreError, TemplateStore, VideoSession, VideoSource,
+        FaceEmbedError, FaceEmbedder, FacePoseEstimator, Health, HealthStatus, LivenessChecker,
+        LivenessError, PoseError, StoreError, TemplateStore, VideoSession, VideoSource,
     };
 
     struct OkHealth;
@@ -502,6 +517,18 @@ mod tests {
         }
     }
 
+    struct AlwaysFrontalPose;
+
+    impl FacePoseEstimator for AlwaysFrontalPose {
+        fn check_frontal(
+            &self,
+            _aligned_face: &Frame,
+            _detection: &FaceDetection,
+        ) -> Result<(), PoseError> {
+            Ok(())
+        }
+    }
+
     struct AlwaysLive;
 
     impl LivenessChecker for AlwaysLive {
@@ -563,6 +590,7 @@ mod tests {
             video: Arc::new(TestVideo),
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
+            pose_estimator: Arc::new(AlwaysFrontalPose),
             liveness: Arc::new(AlwaysLive),
             face_embedder: Arc::new(ConstFaceEmbedder { out: embed_out }),
             template_store,
@@ -586,6 +614,7 @@ mod tests {
             video: Arc::new(TestVideo),
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
+            pose_estimator: Arc::new(AlwaysFrontalPose),
             liveness: Arc::new(AlwaysLive),
             face_embedder: Arc::new(ConstFaceEmbedder {
                 out: Embedding(vec![1.0]),
@@ -722,6 +751,7 @@ mod tests {
             video: Arc::new(TestVideo),
             detector: Arc::new(NoFaceDetector),
             aligner: Arc::new(CloneAligner),
+            pose_estimator: Arc::new(AlwaysFrontalPose),
             liveness: Arc::new(AlwaysLive),
             face_embedder: Arc::new(ConstFaceEmbedder {
                 out: Embedding(vec![1.0, 0.0]),
@@ -745,6 +775,7 @@ mod tests {
             video: Arc::new(TestVideo),
             detector: Arc::new(FullFrameDetector),
             aligner: Arc::new(CloneAligner),
+            pose_estimator: Arc::new(AlwaysFrontalPose),
             liveness: Arc::new(AlwaysLive),
             face_embedder: Arc::new(ConstFaceEmbedder {
                 out: Embedding(vec![1.0, 0.0]),

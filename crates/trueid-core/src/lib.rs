@@ -12,5 +12,5 @@ pub use domain::{
 };
 pub use ports::{
     AlignError, CaptureError, DetectError, FaceAligner, FaceDetector, FaceEmbedError, FaceEmbedder,
-    LivenessChecker, LivenessError, VideoSession, VideoSource,
+    FacePoseEstimator, LivenessChecker, LivenessError, PoseError, VideoSession, VideoSource,
 };

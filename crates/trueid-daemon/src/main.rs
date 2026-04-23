@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use trueid_core::ports::{FaceAligner, FaceDetector, FaceEmbedder};
+use trueid_core::ports::{FaceAligner, FaceDetector, FaceEmbedder, FacePoseEstimator};
 use trueid_core::{
     Embedding, StreamLimits, StreamModality, StreamingPolicy, TrueIdApp, TrueIdAppDeps, VideoSource,
 };
@@ -121,6 +121,8 @@ fn main() -> std::io::Result<()> {
     } else {
         Arc::new(adapters::CropFaceAligner::with_debug_dir(debug_aligned))
     };
+    let pose_estimator: Arc<dyn FacePoseEstimator> =
+        Arc::new(adapters::PassthroughFacePoseEstimator);
     let liveness = Arc::new(adapters::AlwaysLiveLiveness);
 
     let streaming = StreamingPolicy {
@@ -139,6 +141,7 @@ fn main() -> std::io::Result<()> {
         video,
         detector,
         aligner,
+        pose_estimator,
         liveness,
         face_embedder,
         template_store,
