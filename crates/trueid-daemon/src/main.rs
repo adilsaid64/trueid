@@ -122,7 +122,11 @@ fn main() -> std::io::Result<()> {
         Arc::new(adapters::CropFaceAligner::with_debug_dir(debug_aligned))
     };
     let pose_estimator: Arc<dyn FacePoseEstimator> =
-        Arc::new(adapters::PassthroughFacePoseEstimator);
+        if cfg.development.passthrough_pose_estimator || cfg.development.mock_detector {
+            Arc::new(adapters::PassthroughFacePoseEstimator)
+        } else {
+            Arc::new(adapters::GeometricLandmarkPoseEstimator::default())
+        };
     let liveness = Arc::new(adapters::AlwaysLiveLiveness);
 
     let streaming = StreamingPolicy {

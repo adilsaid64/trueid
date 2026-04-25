@@ -40,3 +40,4 @@ development:
   mock_embedder: false
   mock_detector: false
   passthrough_aligner: false
+  passthrough_pose_estimator: false

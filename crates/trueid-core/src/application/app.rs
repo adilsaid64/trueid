@@ -121,9 +121,11 @@ impl TrueIdApp {
         match self.pose_estimator.check_frontal(&aligned, &det) {
             Ok(()) => {}
             Err(PoseError::NotFrontal) => {
-                tracing::debug!(
+                tracing::info!(
+                    w = frame.width,
+                    h = frame.height,
                     elapsed_ms = t0.elapsed().as_millis(),
-                    "pipeline: pose → not frontal"
+                    "discarding frame: pose not frontal (head not toward camera)"
                 );
                 return Ok(None);
             }

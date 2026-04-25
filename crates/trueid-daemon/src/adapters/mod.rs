@@ -13,7 +13,7 @@ mod video;
 pub use face_aligner::{CropFaceAligner, PassthroughFaceAligner};
 pub use face_detector::{FullFrameFaceDetector, build_face_detector};
 pub use face_embedder::{MockFaceEmbedder, build_face_embedder};
-pub use face_pose::PassthroughFacePoseEstimator;
+pub use face_pose::{GeometricLandmarkPoseEstimator, PassthroughFacePoseEstimator};
 pub use health::DefaultHealth;
 pub use liveness::AlwaysLiveLiveness;
 pub use matcher::CosineMatcher;

@@ -108,6 +108,7 @@ pub struct DevelopmentConfig {
     pub mock_embedder: bool,
     pub mock_detector: bool,
     pub passthrough_aligner: bool,
+    pub passthrough_pose_estimator: bool,
 }
 
 impl Default for LoggingConfig {
