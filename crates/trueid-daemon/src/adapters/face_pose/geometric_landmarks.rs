@@ -5,17 +5,13 @@ use trueid_core::{FaceDetection, FaceLandmarks, Frame};
 pub struct GeometricLandmarkPoseEstimator {
     pub max_abs_roll_deg: f32,
     pub max_abs_yaw_ratio: f32,
-    pub expected_nose_y_ratio: f32,
-    pub max_pitch_t_deviation: f32,
 }
 
 impl Default for GeometricLandmarkPoseEstimator {
     fn default() -> Self {
         Self {
-            max_abs_roll_deg: 22.0,
-            max_abs_yaw_ratio: 0.28,
-            expected_nose_y_ratio: 0.42,
-            max_pitch_t_deviation: 0.16,
+            max_abs_roll_deg: 30.0,
+            max_abs_yaw_ratio: 0.45,
         }
     }
 }
@@ -38,19 +34,6 @@ impl GeometricLandmarkPoseEstimator {
         let eye_mid_x = (lm.left_eye.0 + lm.right_eye.0) * 0.5;
         let yaw_ratio = (lm.nose_tip.0 - eye_mid_x) / inter_eye;
         if !yaw_ratio.is_finite() || yaw_ratio.abs() > self.max_abs_yaw_ratio {
-            return Err(PoseError::NotFrontal);
-        }
-
-        let eye_y = (lm.left_eye.1 + lm.right_eye.1) * 0.5;
-        let mouth_y = (lm.mouth_left.1 + lm.mouth_right.1) * 0.5;
-        let face_h = mouth_y - eye_y;
-        if !face_h.is_finite() || face_h < 1e-5 {
-            return Err(PoseError::Failed(
-                "face height (eyes–mouth) too small".into(),
-            ));
-        }
-        let t = (lm.nose_tip.1 - eye_y) / face_h;
-        if !t.is_finite() || (t - self.expected_nose_y_ratio).abs() > self.max_pitch_t_deviation {
             return Err(PoseError::NotFrontal);
         }
 
