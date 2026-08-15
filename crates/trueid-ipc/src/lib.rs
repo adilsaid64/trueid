@@ -8,7 +8,6 @@ pub const IPC_PROTOCOL_VERSION: u32 = 2;
 /// on Linux when [`UnixStream::read_line`] times out.
 pub const IPC_READ_TIMEOUT: Duration = Duration::from_secs(120);
 
-// pub const SOCKET_PATH: &str = "/tmp/trueid.sock";
 pub const SOCKET_PATH: &str = "/run/trueid/trueid.sock";
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -25,6 +24,17 @@ pub enum Request {
     AddTemplate {
         uid: u32,
     },
+}
+
+impl Request {
+    pub fn op_name(&self) -> &'static str {
+        match self {
+            Request::Ping => "ping",
+            Request::Verify { .. } => "verify",
+            Request::Enroll { .. } => "enroll",
+            Request::AddTemplate { .. } => "add_template",
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -71,6 +81,14 @@ pub fn send_request(request: Request) -> std::io::Result<Response> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_op_name() {
+        assert_eq!(Request::Ping.op_name(), "ping");
+        assert_eq!(Request::Verify { uid: 1 }.op_name(), "verify");
+        assert_eq!(Request::Enroll { uid: 1 }.op_name(), "enroll");
+        assert_eq!(Request::AddTemplate { uid: 1 }.op_name(), "add_template");
+    }
 
     #[test]
     fn request_ping_roundtrip() {

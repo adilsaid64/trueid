@@ -11,9 +11,11 @@ use trueid_core::{Embedding, TemplateBundle, UserId};
 struct TemplateFile {
     #[serde(default)]
     templates: Vec<Vec<f32>>,
-    #[serde(default)]
+    /// Legacy RGB-only templates; read on load, never written.
+    #[serde(default, skip_serializing)]
     rgb: Vec<Vec<f32>>,
-    #[serde(default)]
+    /// Legacy IR-only templates; read on load, never written.
+    #[serde(default, skip_serializing)]
     ir: Vec<Vec<f32>>,
 }
 
@@ -25,13 +27,13 @@ impl TemplateFile {
             self.rgb.into_iter().chain(self.ir).collect()
         };
         TemplateBundle {
-            templates: raw.into_iter().map(Embedding).collect(),
+            templates: raw.into_iter().map(Embedding::new).collect(),
         }
     }
 
     fn from_bundle(bundle: &TemplateBundle) -> Self {
         Self {
-            templates: bundle.templates.iter().map(|e| e.0.clone()).collect(),
+            templates: bundle.templates.iter().map(|e| e.to_vec()).collect(),
             rgb: Vec::new(),
             ir: Vec::new(),
         }
@@ -133,7 +135,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("trueid-test-{}", uid.0));
         let _ = fs::remove_dir_all(&dir);
         let store = FileTemplateStore::open(&dir).unwrap();
-        let emb = Embedding(vec![0.25, 0.5, 0.75]);
+        let emb = Embedding::new(vec![0.25, 0.5, 0.75]);
         let bundle = TemplateBundle {
             templates: vec![emb.clone()],
         };
@@ -148,13 +150,48 @@ mod tests {
         let dir = std::env::temp_dir().join("trueid-multi-template-test");
         let _ = fs::remove_dir_all(&dir);
         let store = FileTemplateStore::open(&dir).unwrap();
-        let a = Embedding(vec![1.0, 0.0]);
-        let b = Embedding(vec![0.0, 1.0]);
+        let a = Embedding::new(vec![1.0, 0.0]);
+        let b = Embedding::new(vec![0.0, 1.0]);
         let bundle = TemplateBundle {
             templates: vec![a.clone(), b.clone()],
         };
         store.save_all(&uid, &bundle).unwrap();
         assert_eq!(store.load_all(&uid).unwrap(), Some(bundle));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn loads_legacy_rgb_ir_fields() {
+        let uid = UserId(44);
+        let dir = std::env::temp_dir().join("trueid-legacy-rgb-ir-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("44.json"), r#"{"rgb":[[1.0,0.0]],"ir":[[0.0,1.0]]}"#).unwrap();
+        let store = FileTemplateStore::open(&dir).unwrap();
+        let loaded = store.load_all(&uid).unwrap().unwrap();
+        assert_eq!(loaded.templates.len(), 2);
+        assert_eq!(loaded.templates[0].as_slice(), &[1.0, 0.0]);
+        assert_eq!(loaded.templates[1].as_slice(), &[0.0, 1.0]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_omits_legacy_rgb_ir_keys() {
+        let uid = UserId(45);
+        let dir = std::env::temp_dir().join("trueid-no-legacy-keys-test");
+        let _ = fs::remove_dir_all(&dir);
+        let store = FileTemplateStore::open(&dir).unwrap();
+        store
+            .save_all(
+                &uid,
+                &TemplateBundle {
+                    templates: vec![Embedding::new(vec![1.0])],
+                },
+            )
+            .unwrap();
+        let raw = fs::read_to_string(dir.join("45.json")).unwrap();
+        assert!(!raw.contains("\"rgb\""));
+        assert!(!raw.contains("\"ir\""));
         let _ = fs::remove_dir_all(&dir);
     }
 }

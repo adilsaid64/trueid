@@ -41,90 +41,64 @@ enum Commands {
     GetModels,
 }
 
+fn uid_or_current(uid: Option<u32>) -> u32 {
+    uid.unwrap_or_else(current_uid)
+}
+
+fn rpc(request: Request) -> Response {
+    match send_request(request) {
+        Ok(Response::Error { message }) => {
+            eprintln!("daemon error: {message}");
+            std::process::exit(1);
+        }
+        Ok(response) => response,
+        Err(e) => {
+            eprintln!("failed to reach trueid-daemon: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn unexpected(op: &str) -> ! {
+    eprintln!("unexpected response for {op}");
+    std::process::exit(1);
+}
+
 fn main() {
     let cli = Cli::parse();
 
-    match &cli.command {
-        Some(Commands::Ping) => match send_request(Request::Ping) {
-            Ok(Response::Pong { ipc_version }) => {
+    match cli.command {
+        Some(Commands::Ping) => match rpc(Request::Ping) {
+            Response::Pong { ipc_version } => {
                 println!("daemon ok (ipc protocol v{ipc_version})");
             }
-            Ok(Response::Error { message }) => {
-                eprintln!("daemon error: {message}");
-                std::process::exit(1);
-            }
-            Ok(_) => {
-                eprintln!("unexpected response for ping");
-                std::process::exit(1);
-            }
-            Err(e) => {
-                eprintln!("failed to reach trueid-daemon: {e}");
-                std::process::exit(1);
-            }
+            _ => unexpected("ping"),
         },
         Some(Commands::Verify { uid }) => {
-            let uid = uid.unwrap_or_else(current_uid);
-            match send_request(Request::Verify { uid }) {
-                Ok(Response::VerifyResult { accepted }) => {
-                    if accepted {
-                        println!("verify accepted (uid {uid})");
-                    } else {
-                        println!("verify rejected (uid {uid})");
-                        std::process::exit(1);
-                    }
+            let uid = uid_or_current(uid);
+            match rpc(Request::Verify { uid }) {
+                Response::VerifyResult { accepted: true } => {
+                    println!("verify accepted (uid {uid})");
                 }
-                Ok(Response::Error { message }) => {
-                    eprintln!("daemon error: {message}");
+                Response::VerifyResult { accepted: false } => {
+                    println!("verify rejected (uid {uid})");
                     std::process::exit(1);
                 }
-                Ok(_) => {
-                    eprintln!("unexpected response for verify");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("failed to reach trueid-daemon: {e}");
-                    std::process::exit(1);
-                }
+                _ => unexpected("verify"),
             }
         }
         Some(Commands::Enroll { uid }) => {
-            let uid = uid.unwrap_or_else(current_uid);
-            match send_request(Request::Enroll { uid }) {
-                Ok(Response::EnrollOk) => {
-                    println!("enrolled (uid {uid})");
-                }
-                Ok(Response::Error { message }) => {
-                    eprintln!("daemon error: {message}");
-                    std::process::exit(1);
-                }
-                Ok(_) => {
-                    eprintln!("unexpected response for enroll");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("failed to reach trueid-daemon: {e}");
-                    std::process::exit(1);
-                }
+            let uid = uid_or_current(uid);
+            match rpc(Request::Enroll { uid }) {
+                Response::EnrollOk => println!("enrolled (uid {uid})"),
+                _ => unexpected("enroll"),
             }
         }
         Some(Commands::AddTemplate { uid }) => {
-            let uid = uid.unwrap_or_else(current_uid);
-            match send_request(Request::AddTemplate { uid }) {
-                Ok(Response::AddTemplateOk) => {
-                    println!("added template (uid {uid})");
-                }
-                Ok(Response::Error { message }) => {
-                    eprintln!("daemon error: {message}");
-                    std::process::exit(1);
-                }
-                Ok(_) => {
-                    eprintln!("unexpected response for add-template");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("failed to reach trueid-daemon: {e}");
-                    std::process::exit(1);
-                }
+            let uid = uid_or_current(uid);
+            match rpc(Request::AddTemplate { uid }) {
+                Response::AddTemplateOk => println!("added template (uid {uid})"),
+                _ => unexpected("add-template"),
             }
         }
         Some(Commands::GetModels) => {

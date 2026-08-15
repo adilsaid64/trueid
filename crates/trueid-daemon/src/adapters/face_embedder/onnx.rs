@@ -3,10 +3,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use image::{DynamicImage, Rgb, RgbImage, imageops::FilterType};
+use image::{DynamicImage, RgbImage, imageops::FilterType};
 use tract_onnx::prelude::*;
 use trueid_core::ports::{FaceEmbedError, FaceEmbedder};
-use trueid_core::{Embedding, Frame, PixelFormat};
+use trueid_core::{Embedding, Frame};
 
 pub struct OnnxFaceEmbedder {
     model: std::sync::Mutex<TypedRunnableModel<TypedModel>>,
@@ -95,47 +95,6 @@ fn normalize_arcface_rgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     )
 }
 
-fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, FaceEmbedError> {
-    let w = frame.width as usize;
-    let h = frame.height as usize;
-    match frame.format {
-        PixelFormat::Rgb8 => {
-            let expected = w
-                .checked_mul(h)
-                .and_then(|n| n.checked_mul(3))
-                .ok_or_else(|| FaceEmbedError::Failed("frame dimensions overflow".into()))?;
-            if frame.bytes.len() != expected {
-                return Err(FaceEmbedError::Failed(format!(
-                    "rgb8 length {} != {}×{}×3",
-                    frame.bytes.len(),
-                    frame.width,
-                    frame.height
-                )));
-            }
-            RgbImage::from_raw(frame.width, frame.height, frame.bytes.clone())
-                .ok_or_else(|| FaceEmbedError::Failed("invalid rgb8 buffer".into()))
-        }
-        PixelFormat::Gray8 => {
-            if frame.bytes.len() != w * h {
-                return Err(FaceEmbedError::Failed(format!(
-                    "gray8 length {} != {}×{}",
-                    frame.bytes.len(),
-                    frame.width,
-                    frame.height
-                )));
-            }
-            let mut rgb = RgbImage::new(frame.width, frame.height);
-            for y in 0..frame.height {
-                for x in 0..frame.width {
-                    let g = frame.bytes[(y * frame.width + x) as usize];
-                    rgb.put_pixel(x, y, Rgb([g, g, g]));
-                }
-            }
-            Ok(rgb)
-        }
-    }
-}
-
 fn build_input_tensor(
     rgb: RgbImage,
     layout: InputLayout,
@@ -190,7 +149,8 @@ fn l2_normalize(mut v: Vec<f32>) -> Vec<f32> {
 
 impl FaceEmbedder for OnnxFaceEmbedder {
     fn embed(&self, frame: &Frame) -> Result<Embedding, FaceEmbedError> {
-        let rgb = frame_to_rgb_image(frame)?;
+        let rgb = crate::adapters::frame_rgb::frame_to_rgb_image(frame)
+            .map_err(FaceEmbedError::Failed)?;
         let tensor = build_input_tensor(rgb, self.layout, self.input_h, self.input_w)?;
         let input = tensor.into_tvalue();
 
@@ -209,7 +169,7 @@ impl FaceEmbedder for OnnxFaceEmbedder {
             .to_array_view::<f32>()
             .map_err(|e| FaceEmbedError::Failed(format!("output dtype: {e}")))?;
         let flat: Vec<f32> = view.iter().copied().collect();
-        Ok(Embedding(l2_normalize(flat)))
+        Ok(Embedding::new(l2_normalize(flat)))
     }
 }
 

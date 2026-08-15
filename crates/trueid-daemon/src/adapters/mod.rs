@@ -4,6 +4,7 @@ mod face_aligner;
 mod face_detector;
 mod face_embedder;
 mod face_pose;
+mod frame_rgb;
 mod health;
 mod liveness;
 mod matcher;

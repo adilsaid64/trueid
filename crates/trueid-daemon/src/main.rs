@@ -23,7 +23,7 @@ fn init_tracing(level: &str) {
 }
 
 fn main() -> std::io::Result<()> {
-    let cfg = config::load_config();
+    let cfg = config::load_config()?;
     init_tracing(&cfg.logging.level);
 
     if Path::new(SOCKET_PATH).exists() {
@@ -86,7 +86,7 @@ fn main() -> std::io::Result<()> {
     };
 
     let face_embedder: Arc<dyn FaceEmbedder> = if cfg.development.mock_embedder {
-        Arc::new(adapters::MockFaceEmbedder::new(Embedding(vec![
+        Arc::new(adapters::MockFaceEmbedder::new(Embedding::new(vec![
             1.0, 0.0, 0.0,
         ])))
     } else {

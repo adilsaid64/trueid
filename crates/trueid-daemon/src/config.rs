@@ -1,6 +1,12 @@
 use serde::Deserialize;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::PathBuf;
+
+use trueid_core::{StreamLimits, StreamingPolicy};
+
+const SYSTEM_CONFIG: &str = "/etc/trueid/config.yaml";
+const BUNDLED_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/config/config.yaml");
 
 const SYSTEM_CONFIG: &str = "/etc/trueid/config.yaml";
 const BUNDLED_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/config/config.yaml");
@@ -81,23 +87,27 @@ pub struct StreamLimitsYaml {
     pub max_frames: u32,
 }
 
+impl StreamLimitsYaml {
+    fn from_limits(limits: StreamLimits) -> Self {
+        Self {
+            warmup_discard: limits.warmup_discard,
+            max_frames: limits.max_frames,
+        }
+    }
+}
+
 impl Default for StreamLimitsYaml {
     fn default() -> Self {
-        Self {
-            warmup_discard: 2,
-            max_frames: 3,
-        }
+        Self::from_limits(StreamingPolicy::default().verify)
     }
 }
 
 impl Default for CapturePolicyYaml {
     fn default() -> Self {
+        let policy = StreamingPolicy::default();
         Self {
-            enroll: StreamLimitsYaml {
-                warmup_discard: 2,
-                max_frames: 5,
-            },
-            verify: StreamLimitsYaml::default(),
+            enroll: StreamLimitsYaml::from_limits(policy.enroll),
+            verify: StreamLimitsYaml::from_limits(policy.verify),
         }
     }
 }
@@ -162,44 +172,57 @@ impl Default for VerificationConfig {
     }
 }
 
-fn resolve_config_path() -> PathBuf {
-    let system = Path::new(SYSTEM_CONFIG);
-    if system.exists() {
-        return system.to_path_buf();
+fn resolve_config_path() -> io::Result<PathBuf> {
+    let candidates = [
+        PathBuf::from(SYSTEM_CONFIG),
+        PathBuf::from(BUNDLED_CONFIG),
+        PathBuf::from("config/config.yaml"),
+    ];
+    for path in &candidates {
+        if path.exists() {
+            return Ok(path.clone());
+        }
     }
-    let bundled = Path::new(BUNDLED_CONFIG);
-    if bundled.exists() {
-        return bundled.to_path_buf();
-    }
-    PathBuf::from("config/config.yaml")
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!(
+            "no config found (tried {SYSTEM_CONFIG}, bundled crate config, config/config.yaml)"
+        ),
+    ))
 }
 
-pub fn load_config() -> Config {
-    let path = resolve_config_path();
-    if !path.exists() {
-        eprintln!(
-            "trueid-daemon: no config at {} (also tried bundled path); using defaults",
-            path.display()
-        );
-        return Config::default();
+pub fn load_config() -> io::Result<Config> {
+    let path = resolve_config_path()?;
+    let contents = fs::read_to_string(&path).map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!("failed to read {}: {e}", path.display()),
+        )
+    })?;
+    serde_yaml::from_str(&contents).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid YAML in {}: {e}", path.display()),
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_defaults_match_core_policy() {
+        let yaml = CapturePolicyYaml::default();
+        let policy = StreamingPolicy::default();
+        assert_eq!(yaml.enroll.warmup_discard, policy.enroll.warmup_discard);
+        assert_eq!(yaml.enroll.max_frames, policy.enroll.max_frames);
+        assert_eq!(yaml.verify.warmup_discard, policy.verify.warmup_discard);
+        assert_eq!(yaml.verify.max_frames, policy.verify.max_frames);
     }
 
-    let contents = match fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!(
-                "trueid-daemon: failed to read {}: {e}; using defaults",
-                path.display()
-            );
-            return Config::default();
-        }
-    };
-
-    serde_yaml::from_str(&contents).unwrap_or_else(|e| {
-        eprintln!(
-            "trueid-daemon: invalid YAML in {}: {e}; using defaults",
-            path.display()
-        );
-        Config::default()
-    })
+    #[test]
+    fn rejects_invalid_yaml() {
+        assert!(serde_yaml::from_str::<Config>("logging: [").is_err());
+    }
 }

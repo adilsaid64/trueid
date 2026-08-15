@@ -1,11 +1,19 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/trueid-core",
+    "crates/trueid-ipc",
     "crates/trueid-daemon",
     "crates/trueid-ctl",
-    "crates/trueid-core",
-    "crates/trueid-ipc", "crates/trueid-pam",
+    "crates/trueid-pam",
 ]
+
+[workspace.dependencies]
+libc = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0.17"
+tracing = "0.1"
 
 [workspace.metadata.release]
 shared-version = true

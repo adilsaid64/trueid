@@ -8,15 +8,23 @@ pub struct EmbeddingSummary {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Embedding(pub Vec<f32>);
+pub struct Embedding(Vec<f32>);
 
 impl Embedding {
+    pub fn new(values: Vec<f32>) -> Self {
+        Self(values)
+    }
+
     pub fn as_slice(&self) -> &[f32] {
         &self.0
     }
 
     pub fn dim(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn to_vec(&self) -> Vec<f32> {
+        self.0.clone()
     }
 
     pub fn summary(&self) -> EmbeddingSummary {
@@ -58,7 +66,7 @@ impl Embedding {
         }
         let mut acc = vec![0.0f32; dim];
         for e in embeddings {
-            for (i, x) in e.0.iter().enumerate() {
+            for (i, x) in e.as_slice().iter().enumerate() {
                 acc[i] += x;
             }
         }
@@ -76,7 +84,7 @@ mod tests {
 
     #[test]
     fn summary_stats() {
-        let e = Embedding(vec![0.0, 3.0, 4.0]);
+        let e = Embedding::new(vec![0.0, 3.0, 4.0]);
         let s = e.summary();
         assert_eq!(s.dim, 3);
         assert_eq!(s.min, 0.0);
@@ -87,9 +95,9 @@ mod tests {
 
     #[test]
     fn try_average_mean() {
-        let a = Embedding(vec![0.0, 4.0]);
-        let b = Embedding(vec![4.0, 0.0]);
+        let a = Embedding::new(vec![0.0, 4.0]);
+        let b = Embedding::new(vec![4.0, 0.0]);
         let m = Embedding::try_average(&[a, b]).unwrap();
-        assert_eq!(m.0, vec![2.0, 2.0]);
+        assert_eq!(m.as_slice(), &[2.0, 2.0]);
     }
 }

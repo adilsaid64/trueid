@@ -4,10 +4,10 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use image::{DynamicImage, Rgb, RgbImage, imageops::FilterType};
+use image::{DynamicImage, RgbImage, imageops::FilterType};
 use tract_onnx::prelude::*;
 use trueid_core::ports::{DetectError, FaceDetector};
-use trueid_core::{BoundingBox, FaceDetection, FaceLandmarks, Frame, PixelFormat};
+use trueid_core::{BoundingBox, FaceDetection, FaceLandmarks, Frame};
 
 const DIVISOR: u32 = 32;
 const INPUT_W: u32 = 640;
@@ -57,7 +57,8 @@ impl OnnxYuNetDetector {
     }
 
     fn preprocess(frame: &Frame) -> Result<Tensor, DetectError> {
-        let rgb = frame_to_rgb_image(frame)?;
+        let rgb = crate::adapters::frame_rgb::frame_to_rgb_image(frame)
+            .map_err(DetectError::Failed)?;
         let dyn_img = DynamicImage::ImageRgb8(rgb);
         let resized = dyn_img
             .resize_exact(INPUT_W, INPUT_H, FilterType::Triangle)
@@ -231,47 +232,6 @@ fn nms(candidates: &[FaceCandidate], nms_threshold: f32, top_k: usize) -> Vec<us
         }
     }
     keep
-}
-
-fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, DetectError> {
-    let w = frame.width as usize;
-    let h = frame.height as usize;
-    match frame.format {
-        PixelFormat::Rgb8 => {
-            let expected = w
-                .checked_mul(h)
-                .and_then(|n| n.checked_mul(3))
-                .ok_or_else(|| DetectError::Failed("frame dimensions overflow".into()))?;
-            if frame.bytes.len() != expected {
-                return Err(DetectError::Failed(format!(
-                    "rgb8 length {} != {}×{}×3",
-                    frame.bytes.len(),
-                    frame.width,
-                    frame.height
-                )));
-            }
-            RgbImage::from_raw(frame.width, frame.height, frame.bytes.clone())
-                .ok_or_else(|| DetectError::Failed("invalid rgb8 buffer".into()))
-        }
-        PixelFormat::Gray8 => {
-            if frame.bytes.len() != w * h {
-                return Err(DetectError::Failed(format!(
-                    "gray8 length {} != {}×{}",
-                    frame.bytes.len(),
-                    frame.width,
-                    frame.height
-                )));
-            }
-            let mut rgb = RgbImage::new(frame.width, frame.height);
-            for y in 0..frame.height {
-                for x in 0..frame.width {
-                    let g = frame.bytes[(y * frame.width + x) as usize];
-                    rgb.put_pixel(x, y, Rgb([g, g, g]));
-                }
-            }
-            Ok(rgb)
-        }
-    }
 }
 
 /// Padded 640 input → normalized coords for source `Frame`.

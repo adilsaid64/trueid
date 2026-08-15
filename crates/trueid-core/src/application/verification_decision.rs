@@ -110,11 +110,11 @@ mod tests {
     #[test]
     fn verify_burst_accept_on_quorum() {
         let bundle = TemplateBundle {
-            templates: vec![Embedding(vec![1.0, 0.0]), Embedding(vec![0.0, 1.0])],
+            templates: vec![Embedding::new(vec![1.0, 0.0]), Embedding::new(vec![0.0, 1.0])],
         };
         let matcher: Arc<dyn EmbeddingMatcher> = Arc::new(ExactMatcher);
         let decider = VerificationDecider::new(matcher);
-        let probe_ok = Embedding(vec![0.0, 1.0]);
+        let probe_ok = Embedding::new(vec![0.0, 1.0]);
         let out = decider.verify_burst(&bundle, &[Some(probe_ok), None]);
         assert!(out.accepted);
         assert!(out.quorum);
@@ -124,14 +124,14 @@ mod tests {
     fn verify_burst_reject_when_quorum_not_met() {
         let bundle = TemplateBundle {
             templates: vec![
-                Embedding(vec![1.0, 0.0]),
-                Embedding(vec![0.0, 1.0]),
-                Embedding(vec![0.0, 0.0, 1.0]),
+                Embedding::new(vec![1.0, 0.0]),
+                Embedding::new(vec![0.0, 1.0]),
+                Embedding::new(vec![0.0, 0.0, 1.0]),
             ],
         };
         let matcher: Arc<dyn EmbeddingMatcher> = Arc::new(ExactMatcher);
         let decider = VerificationDecider::new(matcher);
-        let out = decider.verify_burst(&bundle, &[Some(Embedding(vec![0.0, 0.0, 1.0]))]);
+        let out = decider.verify_burst(&bundle, &[Some(Embedding::new(vec![0.0, 0.0, 1.0]))]);
         assert!(!out.accepted);
     }
 }

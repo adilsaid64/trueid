@@ -57,53 +57,36 @@ fn handle_connection(stream: UnixStream, app: &TrueIdApp) -> std::io::Result<()>
     Ok(())
 }
 
+fn map_result<T>(result: Result<T, impl ToString>, ok: impl FnOnce(T) -> Response) -> Response {
+    match result {
+        Ok(value) => ok(value),
+        Err(e) => Response::Error {
+            message: e.to_string(),
+        },
+    }
+}
+
 fn dispatch(app: &TrueIdApp, request: Request) -> Response {
     let t0 = Instant::now();
-    let op = match &request {
-        Request::Ping => "ping",
-        Request::Verify { .. } => "verify",
-        Request::Enroll { .. } => "enroll",
-        Request::AddTemplate { .. } => "add_template",
-    };
+    let op = request.op_name();
     tracing::info!(op, ?request, "ipc: request");
 
     let response = match request {
-        Request::Ping => match app.ping() {
-            Ok(()) => Response::Pong {
-                ipc_version: IPC_PROTOCOL_VERSION,
-            },
-            Err(e) => Response::Error {
-                message: e.to_string(),
-            },
-        },
-        Request::Verify { uid } => match app.verify(&UserId(uid)) {
-            Ok(accepted) => Response::VerifyResult { accepted },
-            Err(e) => {
-                tracing::warn!(error = %e, uid, "ipc: verify failed");
-                Response::Error {
-                    message: e.to_string(),
-                }
-            }
-        },
-        Request::Enroll { uid } => match app.enroll(&UserId(uid)) {
-            Ok(()) => Response::EnrollOk,
-            Err(e) => {
-                tracing::warn!(error = %e, uid, "ipc: enroll failed");
-                Response::Error {
-                    message: e.to_string(),
-                }
-            }
-        },
-        Request::AddTemplate { uid } => match app.add_template(&UserId(uid)) {
-            Ok(()) => Response::AddTemplateOk,
-            Err(e) => {
-                tracing::warn!(error = %e, uid, "ipc: add_template failed");
-                Response::Error {
-                    message: e.to_string(),
-                }
-            }
-        },
+        Request::Ping => map_result(app.ping(), |()| Response::Pong {
+            ipc_version: IPC_PROTOCOL_VERSION,
+        }),
+        Request::Verify { uid } => map_result(app.verify(&UserId(uid)), |accepted| {
+            Response::VerifyResult { accepted }
+        }),
+        Request::Enroll { uid } => map_result(app.enroll(&UserId(uid)), |()| Response::EnrollOk),
+        Request::AddTemplate { uid } => {
+            map_result(app.add_template(&UserId(uid)), |()| Response::AddTemplateOk)
+        }
     };
+
+    if let Response::Error { message } = &response {
+        tracing::warn!(op, error = %message, "ipc: request failed");
+    }
 
     tracing::info!(
         op,

@@ -104,7 +104,8 @@ impl FaceAligner for CropFaceAligner {
             "align: start"
         );
 
-        let rgb = frame_to_rgb_image(frame).map_err(AlignError::Failed)?;
+        let rgb = crate::adapters::frame_rgb::frame_to_rgb_image(frame)
+            .map_err(AlignError::Failed)?;
         let out = self.output_size;
 
         let cropped = if let Some(ref lm) = detection.landmarks {
@@ -139,47 +140,6 @@ impl FaceAligner for CropFaceAligner {
         };
         maybe_dump_aligned_face(self.debug_aligned_dir.as_deref(), &aligned);
         Ok(aligned)
-    }
-}
-
-fn frame_to_rgb_image(frame: &Frame) -> Result<RgbImage, String> {
-    let w = frame.width as usize;
-    let h = frame.height as usize;
-    match frame.format {
-        PixelFormat::Rgb8 => {
-            let expected = w
-                .checked_mul(h)
-                .and_then(|n| n.checked_mul(3))
-                .ok_or_else(|| "frame dimensions overflow".to_string())?;
-            if frame.bytes.len() != expected {
-                return Err(format!(
-                    "rgb8 length {} != {}×{}×3",
-                    frame.bytes.len(),
-                    frame.width,
-                    frame.height
-                ));
-            }
-            RgbImage::from_raw(frame.width, frame.height, frame.bytes.clone())
-                .ok_or_else(|| "invalid rgb8 buffer".to_string())
-        }
-        PixelFormat::Gray8 => {
-            if frame.bytes.len() != w * h {
-                return Err(format!(
-                    "gray8 length {} != {}×{}",
-                    frame.bytes.len(),
-                    frame.width,
-                    frame.height
-                ));
-            }
-            let mut rgb = RgbImage::new(frame.width, frame.height);
-            for y in 0..frame.height {
-                for x in 0..frame.width {
-                    let g = frame.bytes[(y * frame.width + x) as usize];
-                    rgb.put_pixel(x, y, Rgb([g, g, g]));
-                }
-            }
-            Ok(rgb)
-        }
     }
 }
 

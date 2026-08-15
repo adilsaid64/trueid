@@ -7,9 +7,6 @@ use crate::ports::{
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("pipeline not implemented: {0}")]
-    PipelineNotImplemented(&'static str),
-
     #[error(transparent)]
     Domain(#[from] DomainError),
 

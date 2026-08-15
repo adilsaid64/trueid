@@ -7,5 +7,5 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-libc = "0.2.183"
+libc = { workspace = true }
 trueid-ipc = { path = "../trueid-ipc" }
