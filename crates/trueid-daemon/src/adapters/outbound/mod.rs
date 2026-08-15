@@ -8,6 +8,7 @@ mod face_detector;
 mod face_embedder;
 mod face_pose;
 pub(crate) mod frame_rgb;
+pub(crate) use frame_rgb::ToRgbImage;
 mod health;
 mod liveness;
 mod matcher;

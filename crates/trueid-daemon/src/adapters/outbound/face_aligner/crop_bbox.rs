@@ -10,6 +10,8 @@ use nalgebra::{Matrix2, SVD};
 use trueid_core::ports::{AlignError, FaceAligner};
 use trueid_core::{BoundingBox, FaceDetection, FaceLandmarks, Frame, PixelFormat};
 
+use crate::adapters::outbound::ToRgbImage;
+
 const DEFAULT_OUTPUT: u32 = 112;
 
 const REF112_FIVE: [(f32, f32); 5] = [
@@ -104,8 +106,7 @@ impl FaceAligner for CropFaceAligner {
             "align: start"
         );
 
-        let rgb = crate::adapters::outbound::frame_rgb::frame_to_rgb_image(frame)
-            .map_err(AlignError::Failed)?;
+        let rgb = frame.to_rgb_image().map_err(AlignError::Failed)?;
         let out = self.output_size;
 
         let cropped = if let Some(ref lm) = detection.landmarks {

@@ -8,6 +8,8 @@ use tract_onnx::prelude::*;
 use trueid_core::ports::{FaceEmbedError, FaceEmbedder};
 use trueid_core::{Embedding, Frame};
 
+use crate::adapters::outbound::ToRgbImage;
+
 pub struct OnnxFaceEmbedder {
     model: std::sync::Mutex<TypedRunnableModel<TypedModel>>,
     layout: InputLayout,
@@ -149,8 +151,7 @@ fn l2_normalize(mut v: Vec<f32>) -> Vec<f32> {
 
 impl FaceEmbedder for OnnxFaceEmbedder {
     fn embed(&self, frame: &Frame) -> Result<Embedding, FaceEmbedError> {
-        let rgb = crate::adapters::outbound::frame_rgb::frame_to_rgb_image(frame)
-            .map_err(FaceEmbedError::Failed)?;
+        let rgb = frame.to_rgb_image().map_err(FaceEmbedError::Failed)?;
         let tensor = build_input_tensor(rgb, self.layout, self.input_h, self.input_w)?;
         let input = tensor.into_tvalue();
 

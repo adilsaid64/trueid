@@ -9,6 +9,8 @@ use tract_onnx::prelude::*;
 use trueid_core::ports::{DetectError, FaceDetector};
 use trueid_core::{BoundingBox, FaceDetection, FaceLandmarks, Frame};
 
+use crate::adapters::outbound::ToRgbImage;
+
 const DIVISOR: u32 = 32;
 const INPUT_W: u32 = 640;
 const INPUT_H: u32 = 640;
@@ -57,8 +59,7 @@ impl OnnxYuNetDetector {
     }
 
     fn preprocess(frame: &Frame) -> Result<Tensor, DetectError> {
-        let rgb = crate::adapters::outbound::frame_rgb::frame_to_rgb_image(frame)
-            .map_err(DetectError::Failed)?;
+        let rgb = frame.to_rgb_image().map_err(DetectError::Failed)?;
         let dyn_img = DynamicImage::ImageRgb8(rgb);
         let resized = dyn_img
             .resize_exact(INPUT_W, INPUT_H, FilterType::Triangle)
