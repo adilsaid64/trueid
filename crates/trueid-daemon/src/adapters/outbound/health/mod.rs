@@ -1,4 +1,4 @@
-//! `Health` adapters.
+//! Outbound `Health`: always-healthy stub.
 
 mod default;
 

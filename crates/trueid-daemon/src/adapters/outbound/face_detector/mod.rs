@@ -1,3 +1,5 @@
+//! Outbound `FaceDetector`: YuNet ONNX or full-frame mock.
+
 mod full_frame;
 mod onnx_yunet;
 

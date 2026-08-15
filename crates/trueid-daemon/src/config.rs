@@ -1,12 +1,12 @@
+//! Daemon YAML config. Core does not read this file; [`crate::composition`] maps it
+//! onto `trueid_core` types and outbound adapter constructors.
+
 use serde::Deserialize;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
 
 use trueid_core::{StreamLimits, StreamingPolicy};
-
-const SYSTEM_CONFIG: &str = "/etc/trueid/config.yaml";
-const BUNDLED_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/config/config.yaml");
 
 const SYSTEM_CONFIG: &str = "/etc/trueid/config.yaml";
 const BUNDLED_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/config/config.yaml");

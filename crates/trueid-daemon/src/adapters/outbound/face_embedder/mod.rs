@@ -1,4 +1,4 @@
-//! ONNX and test embedders.
+//! Outbound `FaceEmbedder`: ONNX ArcFace or constant mock.
 
 pub mod mock;
 pub mod onnx;

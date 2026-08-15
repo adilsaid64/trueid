@@ -1,3 +1,9 @@
+//! Outbound ports: traits the application uses to talk to the outside world.
+//!
+//! Implementations live in `trueid-daemon` under `adapters/outbound/`, one
+//! subdirectory per port. Inbound entry points are [`crate::TrueIdApp`] methods,
+//! not traits in this module.
+
 pub mod face_aligner;
 pub mod face_detector;
 pub mod face_embedder;

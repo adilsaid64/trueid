@@ -1,3 +1,5 @@
+//! Driving adapter: PAM module that verifies a user via `trueid-ipc`.
+
 use libc::{c_char, c_int, getpwnam_r, passwd, uid_t};
 use std::ffi::CStr;
 use std::ptr;

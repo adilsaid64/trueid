@@ -1,3 +1,6 @@
+//! Shared `Frame` → `image::RgbImage` conversion for outbound ML adapters.
+//! Not a port: core never depends on the `image` crate.
+
 use image::{Rgb, RgbImage};
 use trueid_core::{Frame, PixelFormat};
 

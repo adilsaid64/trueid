@@ -57,7 +57,7 @@ impl OnnxYuNetDetector {
     }
 
     fn preprocess(frame: &Frame) -> Result<Tensor, DetectError> {
-        let rgb = crate::adapters::frame_rgb::frame_to_rgb_image(frame)
+        let rgb = crate::adapters::outbound::frame_rgb::frame_to_rgb_image(frame)
             .map_err(DetectError::Failed)?;
         let dyn_img = DynamicImage::ImageRgb8(rgb);
         let resized = dyn_img

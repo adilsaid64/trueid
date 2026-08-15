@@ -1,6 +1,6 @@
 # Run locally
 
-From the repo root.
+From the repo root. Folder layout and where to change code: [architecture](architecture.md).
 
 ## Daemon
 

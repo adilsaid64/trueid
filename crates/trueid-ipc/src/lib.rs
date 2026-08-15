@@ -1,3 +1,7 @@
+//! JSON-lines Unix protocol between driving adapters (CLI, PAM) and the daemon.
+//!
+//! Not the hexagon itself: request/response DTOs plus a client helper.
+
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 

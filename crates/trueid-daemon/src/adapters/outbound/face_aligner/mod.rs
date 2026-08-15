@@ -1,3 +1,5 @@
+//! Outbound `FaceAligner`: landmark warp or bbox crop.
+
 mod crop_bbox;
 mod passthrough;
 

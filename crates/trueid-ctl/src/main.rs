@@ -1,3 +1,5 @@
+//! Driving adapter: CLI that talks to the daemon over `trueid-ipc`.
+
 use clap::{Parser, Subcommand};
 use trueid_ipc::{Request, Response, send_request};
 mod models;

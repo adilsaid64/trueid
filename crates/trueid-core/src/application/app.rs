@@ -1,3 +1,8 @@
+//! Application service: enroll / verify / add-template over a video stream.
+//!
+//! This is the inbound port. Driving adapters call these methods; they do not
+//! reach outbound adapters directly.
+
 use std::sync::Arc;
 use std::time::Instant;
 

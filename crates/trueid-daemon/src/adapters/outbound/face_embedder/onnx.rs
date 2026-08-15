@@ -149,7 +149,7 @@ fn l2_normalize(mut v: Vec<f32>) -> Vec<f32> {
 
 impl FaceEmbedder for OnnxFaceEmbedder {
     fn embed(&self, frame: &Frame) -> Result<Embedding, FaceEmbedError> {
-        let rgb = crate::adapters::frame_rgb::frame_to_rgb_image(frame)
+        let rgb = crate::adapters::outbound::frame_rgb::frame_to_rgb_image(frame)
             .map_err(FaceEmbedError::Failed)?;
         let tensor = build_input_tensor(rgb, self.layout, self.input_h, self.input_w)?;
         let input = tensor.into_tvalue();

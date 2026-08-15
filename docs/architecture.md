@@ -1,10 +1,43 @@
 # Architecture
 
-## Overview
+Hexagonal (ports and adapters). The folder tree is the pattern.
 
-Crates split **core** (ports + `TrueIdApp`) from **adapters** (camera, ONNX, files).
+```
+crates/
+  trueid-core/src/                 hexagon interior
+    domain/                        users, frames, faces, embeddings
+    application/                   enroll, verify, add_template (inbound port)
+    ports/                         outbound traits (camera, detect, store, …)
 
-On **verify**:
+  trueid-daemon/src/
+    main.rs                        load config, build app, serve IPC
+    composition.rs                 wires outbound adapters → TrueIdApp
+    config.rs                      YAML (core does not read this)
+    adapters/
+      inbound/ipc.rs               Unix socket → TrueIdApp
+      outbound/<port>/             impls of core ports (V4L, ONNX, disk, …)
+
+  trueid-ctl/                      inbound adapter (CLI)
+  trueid-pam/                      inbound adapter (PAM)
+  trueid-ipc/                      JSON-lines protocol used by inbound adapters
+```
+
+Driving adapters call `TrueIdApp` methods. They never construct V4L or ONNX types. Outbound adapters implement `trueid_core::ports`. Core has no camera, ONNX, filesystem, or YAML dependencies.
+
+## Where to add something
+
+| I want to… | Go here |
+| --- | --- |
+| Change match / enroll / verify rules | `trueid-core/src/application/` |
+| Add a domain type | `trueid-core/src/domain/` |
+| Add a capability the app needs from the outside | new trait in `trueid-core/src/ports/` **and** an impl under `trueid-daemon/src/adapters/outbound/` |
+| Swap YuNet, V4L, disk, matcher | `trueid-daemon/src/adapters/outbound/<port>/` |
+| Change the Unix protocol | `trueid-ipc` **and** `trueid-daemon/src/adapters/inbound/ipc.rs` |
+| Change CLI or PAM | `trueid-ctl` / `trueid-pam` |
+| Wire a different impl | `trueid-daemon/src/composition.rs` |
+| Change config keys | `trueid-daemon/src/config.rs` + `config/config.yaml` |
+
+## Verify flow
 
 1. **VideoSource** — open a streaming session (`open_session`) on the configured modality (RGB **or** IR).
 2. **Stream** — pull frames with `next_frame()` until capture limits are reached (warmup discard + max frames).
@@ -12,34 +45,7 @@ On **verify**:
 4. **Match** — compare probe embeddings against stored templates (quorum-style decision over the stream).
 5. Return result.
 
----
-
-## Components
-
-* **TrueIdApp** — auth pipeline (`ping`, `enroll`, `verify`, `add_template`)
-* **Health** — readiness gate before capture
-* **VideoSource** — open a streaming session; used inside camera adapters (V4L, mock)
-* **VideoSession** — `next_frame()` iterator-like interface
-* **FaceDetector** — primary face → `FaceDetection`
-* **FaceAligner** — crop/warp to a standard face image
-* **LivenessChecker** — spoof check on aligned crop
-* **FaceEmbedder** — face image → embedding
-* **EmbeddingMatcher** — compare embeddings (e.g. cosine vs threshold)
-* **TemplateStore** — templates as a single list of embeddings per user (`TemplateBundle.templates`)
-
-Adapters implement V4L, mocks, ONNX, disk. The daemon reads `config.yaml`; core does not.
-
----
-
-## Capture model
-
-* One operation (`enroll` / `verify` / `add_template`) opens one `VideoSource` streaming session.
-* Exactly one modality per deployment: RGB **or** IR (no fusion).
-* Optional warm-up discard, then at most `max_frames` frames are pulled from the session.
-
----
-
-## Flow
+One operation (`enroll` / `verify` / `add_template`) opens one session. Exactly one modality per deployment: RGB **or** IR (no fusion).
 
 ```mermaid
 sequenceDiagram

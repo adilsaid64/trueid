@@ -24,15 +24,17 @@ Project is still a work in progress and open to contributions :)
 
 ## Components
 
-`trueid` is composed of three core components:
+Hexagonal layout: [architecture](docs/architecture.md).
 
-| Component | Description | Responsibilities |
-| --------- | ----------- | ---------------- |
-| **trueid-ctl** | CLI for talking to the daemon | Enroll, verify, add-template, `get-models`, ping |
-| **trueid-pam** | PAM module | Hooks into login, `sudo`, and other PAM services |
-| **trueid-daemon** | Background service | V4L (or mock) video session, ONNX face pipeline, template I/O, Unix socket IPC |
+| Component | Role | Responsibilities |
+| --------- | ---- | ---------------- |
+| **trueid-core** | Hexagon interior | Domain types, outbound ports, `TrueIdApp` (enroll / verify / add-template) |
+| **trueid-daemon** | Composition + adapters | Wires outbound impls, serves inbound Unix IPC |
+| **trueid-ctl** | Inbound adapter | CLI: enroll, verify, add-template, `get-models`, ping |
+| **trueid-pam** | Inbound adapter | PAM login / `sudo` |
+| **trueid-ipc** | Protocol | JSON-lines DTOs shared by CLI, PAM, and the daemon |
 
-* [Architecture](docs/architecture.md) (may lag the code slightly—prefer this README + `docs/developing.md` for current behavior)
+* [Architecture](docs/architecture.md) — hexagonal layout, folder map, where to add code
 * [Run / config](docs/developing.md)
 * [Models](docs/models.md)
 

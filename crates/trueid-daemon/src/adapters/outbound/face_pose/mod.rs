@@ -1,3 +1,5 @@
+//! Outbound `FacePoseEstimator`: geometric landmarks or passthrough.
+
 mod geometric_landmarks;
 mod passthrough;
 

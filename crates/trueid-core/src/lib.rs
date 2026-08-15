@@ -1,3 +1,9 @@
+//! Hexagon interior: domain types, outbound ports, and application services.
+//!
+//! This crate has no camera, ONNX, filesystem, or YAML dependencies.
+//! The daemon injects outbound adapters via [`TrueIdAppDeps`].
+//! Driving adapters (CLI, PAM, Unix IPC) call [`TrueIdApp`] methods.
+
 pub mod application;
 pub mod domain;
 pub mod ports;

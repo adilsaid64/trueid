@@ -1,3 +1,5 @@
+//! Inbound Unix-socket adapter. Translates JSON-lines IPC into `TrueIdApp` calls.
+
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;

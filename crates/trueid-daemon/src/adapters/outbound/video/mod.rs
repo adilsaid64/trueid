@@ -1,3 +1,5 @@
+//! Outbound `VideoSource`: V4L or mock frames.
+
 mod mock;
 mod v4l;
 

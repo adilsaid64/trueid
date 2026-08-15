@@ -104,7 +104,7 @@ impl FaceAligner for CropFaceAligner {
             "align: start"
         );
 
-        let rgb = crate::adapters::frame_rgb::frame_to_rgb_image(frame)
+        let rgb = crate::adapters::outbound::frame_rgb::frame_to_rgb_image(frame)
             .map_err(AlignError::Failed)?;
         let out = self.output_size;
 

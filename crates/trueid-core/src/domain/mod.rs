@@ -1,3 +1,7 @@
+//! Domain types: users, frames, faces, embeddings, templates.
+//!
+//! No I/O. No ports. Application and adapters both depend on these.
+
 pub mod embedding;
 pub mod error;
 pub mod face;
