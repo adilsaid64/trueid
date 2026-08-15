@@ -166,7 +166,11 @@ mod tests {
         let dir = std::env::temp_dir().join("trueid-legacy-rgb-ir-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("44.json"), r#"{"rgb":[[1.0,0.0]],"ir":[[0.0,1.0]]}"#).unwrap();
+        fs::write(
+            dir.join("44.json"),
+            r#"{"rgb":[[1.0,0.0]],"ir":[[0.0,1.0]]}"#,
+        )
+        .unwrap();
         let store = FileTemplateStore::open(&dir).unwrap();
         let loaded = store.load_all(&uid).unwrap().unwrap();
         assert_eq!(loaded.templates.len(), 2);

@@ -193,12 +193,8 @@ fn resolve_config_path() -> io::Result<PathBuf> {
 
 pub fn load_config() -> io::Result<Config> {
     let path = resolve_config_path()?;
-    let contents = fs::read_to_string(&path).map_err(|e| {
-        io::Error::new(
-            e.kind(),
-            format!("failed to read {}: {e}", path.display()),
-        )
-    })?;
+    let contents = fs::read_to_string(&path)
+        .map_err(|e| io::Error::new(e.kind(), format!("failed to read {}: {e}", path.display())))?;
     serde_yaml::from_str(&contents).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,

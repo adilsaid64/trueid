@@ -110,7 +110,10 @@ mod tests {
     #[test]
     fn verify_burst_accept_on_quorum() {
         let bundle = TemplateBundle {
-            templates: vec![Embedding::new(vec![1.0, 0.0]), Embedding::new(vec![0.0, 1.0])],
+            templates: vec![
+                Embedding::new(vec![1.0, 0.0]),
+                Embedding::new(vec![0.0, 1.0]),
+            ],
         };
         let matcher: Arc<dyn EmbeddingMatcher> = Arc::new(ExactMatcher);
         let decider = VerificationDecider::new(matcher);

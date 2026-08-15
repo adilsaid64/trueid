@@ -251,8 +251,8 @@ impl TrueIdApp {
             tracing::warn!(op, "no usable embeddings from any frame");
             return Err(DomainError::NoUsableFaceInCapture.into());
         }
-        let template = Embedding::try_average(&embeddings)
-            .ok_or(DomainError::EmbeddingAggregationFailed)?;
+        let template =
+            Embedding::try_average(&embeddings).ok_or(DomainError::EmbeddingAggregationFailed)?;
         tracing::info!(
             op,
             from_frames = embeddings.len(),
