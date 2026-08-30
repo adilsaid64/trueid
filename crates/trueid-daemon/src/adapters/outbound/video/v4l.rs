@@ -91,13 +91,8 @@ impl VideoSession for V4lVideoSession {
             self.modality,
             self.pixel_fix,
         )?;
-        let frame = Frame {
-            modality: self.modality,
-            width: fw,
-            height: fh,
-            format,
-            bytes,
-        };
+        let frame = Frame::new(self.modality, fw, fh, format, bytes)
+            .map_err(|e| CaptureError::Failed(e.to_string()))?;
         if self.debug_frames_root.is_some() {
             self.debug_accum.push(frame.clone());
         }
@@ -128,14 +123,14 @@ fn modality_subdir(m: StreamModality) -> &'static str {
 
 fn save_frame_png(frame: &Frame, path: &Path) -> Result<(), io::Error> {
     let map_img = |e: image::ImageError| io::Error::other(e.to_string());
-    match frame.format {
+    match frame.format() {
         PixelFormat::Rgb8 => {
-            let img = RgbImage::from_raw(frame.width, frame.height, frame.bytes.clone())
+            let img = RgbImage::from_raw(frame.width(), frame.height(), frame.bytes().to_vec())
                 .ok_or_else(|| io::Error::other("debug v4l: invalid rgb8 dimensions"))?;
             img.save(path).map_err(map_img)?;
         }
         PixelFormat::Gray8 => {
-            let img = GrayImage::from_raw(frame.width, frame.height, frame.bytes.clone())
+            let img = GrayImage::from_raw(frame.width(), frame.height(), frame.bytes().to_vec())
                 .ok_or_else(|| io::Error::other("debug v4l: invalid gray8 dimensions"))?;
             img.save(path).map_err(map_img)?;
         }

@@ -237,8 +237,8 @@ fn nms(candidates: &[FaceCandidate], nms_threshold: f32, top_k: usize) -> Vec<us
 
 /// Padded 640 input → normalized coords for source `Frame`.
 fn to_detection(candidate: &FaceCandidate, frame: &Frame) -> FaceDetection {
-    let fw = frame.width as f32;
-    let fh = frame.height as f32;
+    let fw = frame.width() as f32;
+    let fh = frame.height() as f32;
     // Model space is INPUT_W×INPUT_H stretch of the full frame.
     let sx = fw / INPUT_W as f32;
     let sy = fh / INPUT_H as f32;
@@ -302,8 +302,8 @@ impl FaceDetector for OnnxYuNetDetector {
             tracing::debug!(
                 infer_ms,
                 total_ms = t0.elapsed().as_millis(),
-                w = frame.width,
-                h = frame.height,
+                w = frame.width(),
+                h = frame.height(),
                 "yunet: no face after NMS"
             );
             return Ok(None);
@@ -319,8 +319,8 @@ impl FaceDetector for OnnxYuNetDetector {
             total_ms = t0.elapsed().as_millis(),
             score = best.score,
             candidates = faces.len(),
-            w = frame.width,
-            h = frame.height,
+            w = frame.width(),
+            h = frame.height(),
             "yunet: primary face"
         );
         Ok(Some(to_detection(best, frame)))

@@ -13,8 +13,8 @@ pub use application::error::AppError;
 pub use application::verification_decision::{BurstVerificationOutcome, VerificationDecider};
 pub use domain::error::DomainError;
 pub use domain::{
-    BoundingBox, Embedding, EmbeddingSummary, FaceDetection, FaceLandmarks, Frame, PixelFormat,
-    StreamModality, TemplateBundle, UserId,
+    BoundingBox, Embedding, EmbeddingSummary, FaceDetection, FaceLandmarks, Frame, FrameError,
+    PixelFormat, StreamModality, TemplateBundle, UserId,
 };
 pub use ports::{
     AlignError, CaptureError, DetectError, FaceAligner, FaceDetector, FaceEmbedError, FaceEmbedder,

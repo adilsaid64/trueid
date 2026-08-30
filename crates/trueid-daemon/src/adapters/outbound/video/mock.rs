@@ -18,20 +18,15 @@ pub struct MockVideoSource {
 impl MockVideoSource {
     pub fn with_modality(modality: StreamModality) -> Self {
         Self {
-            frame: Frame {
-                modality,
-                width: 2,
-                height: 2,
-                format: PixelFormat::Gray8,
-                bytes: vec![0, 255, 128, 64],
-            },
+            frame: Frame::new(modality, 2, 2, PixelFormat::Gray8, vec![0, 255, 128, 64])
+                .expect("2×2 Gray8 is 4 bytes"),
         }
     }
 }
 
 impl VideoSource for MockVideoSource {
     fn modality(&self) -> StreamModality {
-        self.frame.modality
+        self.frame.modality()
     }
 
     fn open_session(&self) -> Result<Box<dyn VideoSession>, CaptureError> {

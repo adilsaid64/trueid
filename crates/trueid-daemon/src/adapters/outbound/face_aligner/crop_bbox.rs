@@ -30,7 +30,7 @@ fn maybe_dump_aligned_face(debug_root: Option<&Path>, aligned: &Frame) {
     let Some(root) = debug_root else {
         return;
     };
-    if aligned.format != PixelFormat::Rgb8 {
+    if aligned.format() != PixelFormat::Rgb8 {
         tracing::warn!("aligned dump: skip non-rgb8 frame");
         return;
     }
@@ -53,13 +53,13 @@ fn maybe_dump_aligned_face(debug_root: Option<&Path>, aligned: &Frame) {
     let file = root.join(name);
     match image::save_buffer(
         &file,
-        &aligned.bytes,
-        aligned.width,
-        aligned.height,
+        aligned.bytes(),
+        aligned.width(),
+        aligned.height(),
         image::ColorType::Rgb8,
     ) {
         Ok(()) => {
-            tracing::info!(path = %file.display(), w = aligned.width, h = aligned.height, "aligned face dumped")
+            tracing::info!(path = %file.display(), w = aligned.width(), h = aligned.height(), "aligned face dumped")
         }
         Err(e) => tracing::warn!(error = %e, path = %file.display(), "aligned dump: save failed"),
     }
@@ -97,8 +97,8 @@ impl FaceAligner for CropFaceAligner {
         let t0 = Instant::now();
         let has_landmarks = detection.landmarks.is_some();
         tracing::debug!(
-            w = frame.width,
-            h = frame.height,
+            w = frame.width(),
+            h = frame.height(),
             output = self.output_size,
             margin = self.margin,
             has_landmarks,
@@ -110,14 +110,14 @@ impl FaceAligner for CropFaceAligner {
         let out = self.output_size;
 
         let cropped = if let Some(ref lm) = detection.landmarks {
-            warp_similarity_five_point(&rgb, frame.width, frame.height, lm, out)?
+            warp_similarity_five_point(&rgb, frame.width(), frame.height(), lm, out)?
         } else {
             tracing::warn!(
                 "align: no landmarks; using square bbox crop (poor match for ArcFace-style embedders)"
             );
             let bb = square_crop_bbox(&detection.bbox, self.margin);
             tracing::trace!(?bb, "align: bbox-only crop (no landmarks)");
-            crop_and_resize(&rgb, frame.width, frame.height, &bb, out)?
+            crop_and_resize(&rgb, frame.width(), frame.height(), &bb, out)?
         };
 
         tracing::debug!(
@@ -132,13 +132,14 @@ impl FaceAligner for CropFaceAligner {
             "align: done"
         );
 
-        let aligned = Frame {
-            modality: frame.modality,
-            width: out,
-            height: out,
-            format: PixelFormat::Rgb8,
-            bytes: cropped.into_raw(),
-        };
+        let aligned = Frame::new(
+            frame.modality(),
+            out,
+            out,
+            PixelFormat::Rgb8,
+            cropped.into_raw(),
+        )
+        .map_err(|e| AlignError::Failed(e.to_string()))?;
         maybe_dump_aligned_face(self.debug_aligned_dir.as_deref(), &aligned);
         Ok(aligned)
     }

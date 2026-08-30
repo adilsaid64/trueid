@@ -130,16 +130,16 @@ impl TrueIdApp {
 
         let Some(det) = self.detector.detect_primary(frame)? else {
             tracing::debug!(
-                w = frame.width,
-                h = frame.height,
+                w = frame.width(),
+                h = frame.height(),
                 elapsed_ms = t0.elapsed().as_millis(),
                 "pipeline: detect → no face"
             );
             return Ok(None);
         };
         tracing::debug!(
-            w = frame.width,
-            h = frame.height,
+            w = frame.width(),
+            h = frame.height(),
             bbox = ?det.bbox,
             has_landmarks = det.landmarks.is_some(),
             "pipeline: detect → face"
@@ -156,8 +156,8 @@ impl TrueIdApp {
             Ok(()) => {}
             Err(PoseError::NotFrontal) => {
                 tracing::info!(
-                    w = frame.width,
-                    h = frame.height,
+                    w = frame.width(),
+                    h = frame.height(),
                     elapsed_ms = t0.elapsed().as_millis(),
                     "discarding frame: pose not frontal (head not toward camera)"
                 );

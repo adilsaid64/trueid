@@ -45,13 +45,8 @@ impl VideoSource for TestVideo {
 
     fn open_session(&self) -> Result<Box<dyn VideoSession>, CaptureError> {
         Ok(Box::new(TestVideoSession {
-            frame: Frame {
-                modality: StreamModality::Rgb,
-                width: 1,
-                height: 1,
-                format: PixelFormat::Gray8,
-                bytes: vec![0],
-            },
+            frame: Frame::new(StreamModality::Rgb, 1, 1, PixelFormat::Gray8, vec![0])
+                .expect("1×1 Gray8 is 1 byte"),
         }))
     }
 }
